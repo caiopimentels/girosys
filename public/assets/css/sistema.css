@@ -1,0 +1,69 @@
+/* Complementos do app.css (que é o mesmo do sistema_keyla) para este sistema. */
+
+a.topnav-item { text-decoration: none; }
+
+/* Filtros: a caixa de seleção cresce até o texto da opção, sem passar por cima da seta. */
+.filtros .form-select { width: auto !important; max-width: 260px; padding-right: 2rem; }
+.filtros .filtro-periodo .filtro-controle { white-space: nowrap; }
+
+.topnav-logo-letra {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+/* !important: as células de tabela do Bootstrap 5.3 forçam a própria cor
+   (--bs-table-color) e apagavam o verde/vermelho dentro das tabelas. */
+.valor-positivo { color: #15803d !important; }
+.valor-negativo { color: #dc2626 !important; }
+html[data-bs-theme="dark"] .valor-positivo { color: #4ade80 !important; }
+html[data-bs-theme="dark"] .valor-negativo { color: #f87171 !important; }
+
+/* Operação de desconto: tabela de títulos editável e resumo ao lado. */
+.tabela-titulos td { vertical-align: top; padding: .35rem .3rem; }
+.tabela-titulos .form-control,
+.tabela-titulos .form-select { font-size: .85rem; padding: .3rem .45rem; }
+.tabela-titulos .calc { font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: .55rem; font-size: .85rem; }
+.tabela-titulos .emitente-info { font-size: .75rem; margin-top: .2rem; min-height: 1rem; }
+.tabela-titulos .titulo-principal td { vertical-align: middle; }
+.tabela-titulos .titulo-principal { cursor: pointer; }
+.tabela-titulos .titulo-detalhes td { background: var(--hover-bg); border-top: 0; padding-bottom: .7rem; }
+.tabela-titulos .input-group-text { font-size: .8rem; padding: .3rem .5rem; }
+.tabela-titulos [data-campo="valor"] { font-size: .95rem; }
+.tabela-titulos .form-select { padding-right: 1.9rem; background-position: right .5rem center; }
+.titulo-resumo { color: var(--text); }
+.titulo-resumo .badge { font-size: .66rem; }
+.tabela-titulos .emitente-info .badge { font-size: .68rem; }
+
+.resumo-operacao { position: sticky; top: calc(var(--topnav-h) + 1rem); }
+.resumo-operacao .linha {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .32rem 0;
+    font-size: .875rem;
+    font-variant-numeric: tabular-nums;
+}
+.resumo-operacao .linha span:first-child { color: var(--text-muted); }
+.resumo-operacao .linha.total { border-top: 1px solid var(--border); margin-top: .3rem; padding-top: .55rem; font-weight: 600; }
+.resumo-operacao .linha.total span:first-child { color: var(--text); }
+.resumo-operacao .saldo-final { font-size: 1.4rem; font-weight: 650; letter-spacing: -.02em; }
+
+/* Cartão de saldo de cada conta bancária (faixa com a cor da conta). */
+.conta-saldo { border-left: 4px solid var(--cor-conta, var(--accent)); }
+.conta-saldo .kpi-valor { font-variant-numeric: tabular-nums; }
+
+.text-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+@media print {
+    .topnav, .pagina-acoes, .nao-imprimir, .pagina-rodape { display: none !important; }
+    .pagina { padding: 0 !important; max-width: none !important; }
+    .card { border: 0 !important; box-shadow: none !important; }
+}

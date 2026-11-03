@@ -1,0 +1,7 @@
+# Configuração do servidor (senha do banco)
+/config/config.php
+
+/storage/
+
+# Arquivos do Finder (macOS)
+.DS_Store
