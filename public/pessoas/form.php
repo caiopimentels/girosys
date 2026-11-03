@@ -118,7 +118,7 @@ if ($id) {
         $stmt->execute([$id, $opDeSql, $opAteSql]);
         $operacoes = $stmt->fetchAll();
         // Repasses em ordem de data para o saldo acumulado; antes do período, só o que ficou em aberto.
-        $stmt = $pdo->prepare('SELECT a.*, c.nome AS conta_nome FROM adiantamentos a LEFT JOIN contas_bancarias c ON c.id = a.conta_id WHERE a.cliente_id = ? AND a.data BETWEEN ? AND ?' . $filtroRepasses . ' ORDER BY a.data, a.id');
+        $stmt = $pdo->prepare('SELECT a.*, c.nome AS conta_nome, pg.nome AS pagador_nome FROM adiantamentos a LEFT JOIN contas_bancarias c ON c.id = a.conta_id LEFT JOIN pessoas pg ON pg.id = a.pagador_id WHERE a.cliente_id = ? AND a.data BETWEEN ? AND ?' . $filtroRepasses . ' ORDER BY a.data, a.id');
         $stmt->execute([$id, $repDeSql, $repAteSql]);
         $adiantamentos = $stmt->fetchAll();
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(valor - valor_utilizado), 0) FROM adiantamentos WHERE cliente_id = ? AND data < ?');
@@ -334,13 +334,13 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
         <div class="card">
             <div class="table-responsive">
                 <table class="table table-sm mb-0 align-middle">
-                    <thead><tr><th>Data</th><th>Descrição</th><th>Saiu de</th><th class="text-end">Valor</th><th class="text-end">Corrigido hoje<?= $pessoa['taxa_padrao'] !== null ? ' (' . e(formatPercent($pessoa['taxa_padrao'])) . ' a.m.)' : '' ?></th><th class="text-end">Saldo corrigido</th></tr></thead>
+                    <thead><tr><th>Data</th><th>Descrição</th><th>Pagador</th><th>Saiu de</th><th class="text-end">Valor</th><th class="text-end">Corrigido hoje<?= $pessoa['taxa_padrao'] !== null ? ' (' . e(formatPercent($pessoa['taxa_padrao'])) . ' a.m.)' : '' ?></th><th class="text-end">Saldo corrigido</th></tr></thead>
                     <tbody>
                     <?php $saldoRep = $saldoAntesRepasses; $totValor = $totUsado = $totAberto = $totCorrigido = 0.0; $hojeRep = date('Y-m-d'); ?>
                     <?php if ($repDe && $saldoAntesRepasses > 0.004): ?>
-                        <tr class="text-muted"><td colspan="5">Em aberto antes de <?= formatDate($repDe) ?></td><td class="text-end text-num valor-negativo"><?= formatMoney($saldoAntesRepasses) ?></td></tr>
+                        <tr class="text-muted"><td colspan="6">Em aberto antes de <?= formatDate($repDe) ?></td><td class="text-end text-num valor-negativo"><?= formatMoney($saldoAntesRepasses) ?></td></tr>
                     <?php endif; ?>
-                    <?php if (!$adiantamentos): ?><tr><td colspan="6" class="text-center text-muted py-3">Nenhum repasse<?= $repDe || $repAte ? ' no período' : '' ?>.</td></tr><?php endif; ?>
+                    <?php if (!$adiantamentos): ?><tr><td colspan="7" class="text-center text-muted py-3">Nenhum repasse<?= $repDe || $repAte ? ' no período' : '' ?>.</td></tr><?php endif; ?>
                     <?php foreach ($adiantamentos as $a):
                         $aberto = round($a['valor'] - $a['valor_utilizado'], 2);
                         $corrigido = $aberto > 0.004 ? $aberto + jurosSimples($aberto, (float) $pessoa['taxa_padrao'], max(0, diasEntre($a['data'], $hojeRep))) : 0;
@@ -348,6 +348,7 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
                         <tr>
                             <td class="text-num"><?= formatDate($a['data']) ?></td>
                             <td><?= e($a['descricao']) ?: '-' ?></td>
+                            <td><?= e($a['pagador_nome'] ?? '') ?: '<span class="text-muted">-</span>' ?></td>
                             <td><?= e($a['conta_nome'] ?? '—') ?></td>
                             <?php // Usado só em parte numa operação: o valor que conta é o que ainda falta. ?>
                             <td class="text-end text-num"><?= formatMoney($aberto > 0.004 ? $aberto : $a['valor']) ?></td>
@@ -358,7 +359,7 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
                     </tbody>
                     <?php if ($adiantamentos): ?>
                     <tfoot><tr class="fw-semibold">
-                        <td colspan="3">Total<?= $repDe || $repAte ? ' do período' : '' ?></td>
+                        <td colspan="4">Total<?= $repDe || $repAte ? ' do período' : '' ?></td>
                         <td class="text-end text-num"><?= formatMoney($repSit === 'pendentes' ? $totAberto : $totValor) ?></td>
                         <td class="text-end text-num"><?= formatMoney($totCorrigido) ?></td>
                         <td class="text-end text-num <?= $saldoRep > 0.004 ? 'valor-negativo' : '' ?>"><?= formatMoney($saldoRep) ?></td>

@@ -53,8 +53,8 @@ function calcularOperacao(string $dataBase, float $taxa, int $diasCompensacao, a
 function adiantamentosEmAberto(PDO $pdo, int $clienteId): array
 {
     $stmt = $pdo->prepare(
-        'SELECT a.*, a.valor - a.valor_utilizado AS em_aberto, c.nome AS conta_nome
-         FROM adiantamentos a LEFT JOIN contas_bancarias c ON c.id = a.conta_id
+        'SELECT a.*, a.valor - a.valor_utilizado AS em_aberto, c.nome AS conta_nome, pg.nome AS pagador_nome
+         FROM adiantamentos a LEFT JOIN contas_bancarias c ON c.id = a.conta_id LEFT JOIN pessoas pg ON pg.id = a.pagador_id
          WHERE a.cliente_id = ? AND a.valor - a.valor_utilizado > 0.004
          ORDER BY a.data, a.id'
     );

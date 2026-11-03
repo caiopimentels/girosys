@@ -44,7 +44,7 @@ responderJson([
         'id' => (int) $a['id'],
         'data' => $a['data'],
         'data_br' => formatDate($a['data']),
-        'descricao' => $a['descricao'] ?? '',
+        'descricao' => implode(' · ', array_filter([$a['pagador_nome'] ? 'pagador ' . $a['pagador_nome'] : null, $a['descricao']])),
         'conta' => $a['conta_nome'] ?? '',
         'valor' => (float) $a['valor'],
         'em_aberto' => round((float) $a['em_aberto'], 2),

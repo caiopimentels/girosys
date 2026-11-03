@@ -10,7 +10,7 @@ $clienteNome = '';
 $id = isset($_GET['id']) ? (int) $_GET['id'] : null;
 $repasse = null;
 if ($id) {
-    $stmt = $pdo->prepare('SELECT a.*, p.nome AS cliente_nome FROM adiantamentos a JOIN pessoas p ON p.id = a.cliente_id WHERE a.id = ?');
+    $stmt = $pdo->prepare('SELECT a.*, p.nome AS cliente_nome, pg.nome AS pagador_nome FROM adiantamentos a JOIN pessoas p ON p.id = a.cliente_id LEFT JOIN pessoas pg ON pg.id = a.pagador_id WHERE a.id = ?');
     $stmt->execute([$id]);
     $repasse = $stmt->fetch();
     if (!$repasse) {
@@ -19,14 +19,16 @@ if ($id) {
     }
     $clienteNome = $repasse['cliente_nome'];
     $_POST += $_SERVER['REQUEST_METHOD'] === 'POST' ? [] : [
-        'data' => $repasse['data'], 'valor' => formatDecimal($repasse['valor']), 'conta_id' => $repasse['conta_id'] ?: 'sem', 'descricao' => $repasse['descricao'],
+        'data' => $repasse['data'], 'valor' => formatDecimal($repasse['valor']), 'conta_id' => $repasse['conta_id'] ?: 'sem', 'descricao' => $repasse['descricao'], 'pagador_nome' => $repasse['pagador_nome'],
     ];
 }
 $soDescricao = $repasse && ((float) $repasse['valor_utilizado'] > 0 || $repasse['operacao_origem_id'] || $repasse['titulo_origem_id']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $soDescricao) {
-    $pdo->prepare('UPDATE adiantamentos SET descricao = ? WHERE id = ?')->execute([input('descricao') ?: null, $id]);
-    flash('success', 'Descrição do repasse alterada.');
+    // Já usado: só descrição e pagador (informativos) mudam.
+    $pdo->prepare('UPDATE adiantamentos SET descricao = ?, pagador_id = ? WHERE id = ?')
+        ->execute([input('descricao') ?: null, obterOuCriarPessoa($pdo, input('pagador_nome'), '', 'pagador'), $id]);
+    flash('success', 'Descrição e pagador do repasse alterados.');
     redirect('/adiantamentos/listar.php');
 }
 if (!$id && !empty($_GET['cliente'])) {
@@ -43,6 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $semConta = ($_POST['conta_id'] ?? '') === 'sem';
     $contaId = $semConta ? null : idOuNull($_POST['conta_id'] ?? null);
     $descricao = input('descricao');
+    $pagadorNome = input('pagador_nome');
 
     if ($clienteNome === '') {
         $erros[] = 'Informe o cliente.';
@@ -56,8 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$erros && $id) {
         $pdo->beginTransaction();
         $clienteId = obterOuCriarPessoa($pdo, $clienteNome, input('cliente_documento'), 'cliente');
-        $pdo->prepare('UPDATE adiantamentos SET cliente_id = ?, data = ?, valor = ?, conta_id = ?, descricao = ? WHERE id = ?')
-            ->execute([$clienteId, $data, round($valor, 2), $contaId, $descricao ?: null, $id]);
+        $pdo->prepare('UPDATE adiantamentos SET cliente_id = ?, pagador_id = ?, data = ?, valor = ?, conta_id = ?, descricao = ? WHERE id = ?')
+            ->execute([$clienteId, obterOuCriarPessoa($pdo, $pagadorNome, '', 'pagador'), $data, round($valor, 2), $contaId, $descricao ?: null, $id]);
         // Refaz a saída no extrato da conta com os dados novos.
         removerMovimentacoes($pdo, 'adiantamento', $id);
         if ($contaId) {
@@ -70,7 +73,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$erros) {
         $pdo->beginTransaction();
         $clienteId = obterOuCriarPessoa($pdo, $clienteNome, input('cliente_documento'), 'cliente');
-        registrarAdiantamento($pdo, $clienteId, $data, $valor, $contaId, $descricao);
+        $novoId = registrarAdiantamento($pdo, $clienteId, $data, $valor, $contaId, $descricao);
+        $pdo->prepare('UPDATE adiantamentos SET pagador_id = ? WHERE id = ?')->execute([obterOuCriarPessoa($pdo, $pagadorNome, '', 'pagador'), $novoId]);
         $pdo->commit();
         flash('success', 'Repasse de ' . formatMoney($valor) . ' registrado. Quando chegarem os títulos, marque-o na operação de desconto.');
         redirect(isset($_POST['salvar_outro']) ? '/adiantamentos/form.php' : '/adiantamentos/listar.php');
@@ -93,12 +97,14 @@ require __DIR__ . '/../../includes/layout_header.php';
 <form method="post" id="form-adiant" style="max-width: 900px;">
     <div class="secao">
         <div class="secao-titulo"><i class="bi bi-cash-coin"></i> Repasse ao cliente</div>
-        <?php if ($soDescricao): ?><div class="alert alert-light border small">Este repasse já entrou numa operação de desconto: só a descrição pode mudar. Para mudar valor ou data, exclua a operação antes.</div><?php endif; ?>
+        <?php if ($soDescricao): ?><div class="alert alert-light border small">Este repasse já entrou numa operação de desconto: só a descrição e o pagador podem mudar. Para mudar valor ou data, exclua a operação antes.</div><?php endif; ?>
         <p class="small text-muted">O valor sai da conta escolhida agora e fica em aberto no nome do cliente. Na operação de desconto, ele é corrigido pela taxa desde esta data.</p>
         <div class="row g-3">
             <div class="col-md-6"><label class="form-label">Cliente *</label><input type="text" name="cliente_nome" id="cliente_nome" class="form-control" data-busca-pessoa="cliente" required autocomplete="off-busca" <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($clienteNome) ?>" <?= $clienteNome ? '' : 'autofocus' ?>><div class="small mt-1" id="cliente-limite"></div></div>
             <div class="col-md-3"><label class="form-label">CPF/CNPJ <span class="text-muted small">(se novo)</span></label><input type="text" name="cliente_documento" class="form-control" inputmode="numeric" <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($_POST['cliente_documento'] ?? '') ?>"></div>
             <div class="col-md-3"><label class="form-label">Data *</label><input type="date" name="data" class="form-control" required <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($_POST['data'] ?? date('Y-m-d')) ?>"></div>
+            <div class="col-md-6"><label class="form-label">Pagador <span class="text-muted small">(opcional)</span></label><input type="text" name="pagador_nome" class="form-control" data-busca-pessoa="pagador" autocomplete="off-busca" value="<?= e($_POST['pagador_nome'] ?? '') ?>"></div>
+            <div class="col-md-6"></div>
             <div class="col-md-3"><label class="form-label">Valor (R$) *</label><input type="text" name="valor" class="form-control" data-moeda inputmode="decimal" required <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($_POST['valor'] ?? '') ?>" <?= $clienteNome ? 'autofocus' : '' ?>></div>
             <div class="col-md-4"><label class="form-label">Saiu da conta *</label><select name="conta_id" id="conta_saida" class="form-select" required <?= $soDescricao ? 'disabled' : '' ?>><?= opcoesContaSaida($pdo, (string) ($_POST['conta_id'] ?? '')) ?></select>
                 <div class="form-text" id="conta-saida-ajuda"></div></div>

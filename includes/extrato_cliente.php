@@ -16,8 +16,9 @@ function lancamentosExtratoCliente(PDO $pdo, int $clienteId, string $ate): array
 {
     $l = [];
     $stmt = $pdo->prepare(
-        "SELECT a.*, c.nome AS conta_nome, r.juros AS titulo_juros, r.operacao_id AS titulo_operacao
-         FROM adiantamentos a LEFT JOIN contas_bancarias c ON c.id = a.conta_id LEFT JOIN contas_receber r ON r.id = a.titulo_origem_id
+        "SELECT a.*, c.nome AS conta_nome, pg.nome AS pagador_nome, r.juros AS titulo_juros, r.operacao_id AS titulo_operacao
+         FROM adiantamentos a LEFT JOIN contas_bancarias c ON c.id = a.conta_id LEFT JOIN pessoas pg ON pg.id = a.pagador_id
+         LEFT JOIN contas_receber r ON r.id = a.titulo_origem_id
          WHERE a.cliente_id = ? AND a.operacao_origem_id IS NULL AND a.data <= ?"
     );
     $stmt->execute([$clienteId, $ate]);
@@ -27,7 +28,7 @@ function lancamentosExtratoCliente(PDO $pdo, int $clienteId, string $ate): array
         }
         // No mesmo dia: repasse antes da operação; título devolvido depois dela.
         $l[] = ['data' => $a['data'], 'ordem' => $a['titulo_origem_id'] ? 6 : 1, 'debito' => (float) $a['valor'], 'credito' => 0.0,
-            'historico' => $a['titulo_origem_id'] ? 'Título devolvido para você · ' . ($a['descricao'] ?: '') : 'Valor passado a você' . ($a['descricao'] ? ' · ' . $a['descricao'] : '') . ($a['conta_nome'] ? ' (' . $a['conta_nome'] . ')' : '')];
+            'historico' => $a['titulo_origem_id'] ? 'Título devolvido para você · ' . ($a['descricao'] ?: '') : 'Valor passado a você' . ($a['pagador_nome'] ? ' · pagador ' . $a['pagador_nome'] : '') . ($a['descricao'] ? ' · ' . $a['descricao'] : '') . ($a['conta_nome'] ? ' (' . $a['conta_nome'] . ')' : '')];
     }
 
     $stmt = $pdo->prepare('SELECT * FROM operacoes WHERE cliente_id = ? AND data_base <= ? ORDER BY data_base, id');

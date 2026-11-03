@@ -78,6 +78,7 @@ CREATE TABLE categorias (
 CREATE TABLE adiantamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     cliente_id INT NOT NULL,
+    pagador_id INT NULL COMMENT 'pagador ligado ao repasse (opcional)',
     data DATE NOT NULL,
     valor DECIMAL(14,2) NOT NULL,
     valor_utilizado DECIMAL(14,2) NOT NULL DEFAULT 0,
@@ -88,6 +89,7 @@ CREATE TABLE adiantamentos (
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX (cliente_id),
     FOREIGN KEY (cliente_id) REFERENCES pessoas(id),
+    FOREIGN KEY (pagador_id) REFERENCES pessoas(id),
     FOREIGN KEY (conta_id) REFERENCES contas_bancarias(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

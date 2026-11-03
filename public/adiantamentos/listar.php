@@ -41,8 +41,8 @@ if ($busca !== '') {
 }
 
 $stmt = $pdo->prepare(
-    'SELECT a.*, p.nome AS cliente_nome, p.taxa_padrao, c.nome AS conta_nome
-     FROM adiantamentos a JOIN pessoas p ON p.id = a.cliente_id LEFT JOIN contas_bancarias c ON c.id = a.conta_id
+    'SELECT a.*, p.nome AS cliente_nome, p.taxa_padrao, c.nome AS conta_nome, pg.nome AS pagador_nome
+     FROM adiantamentos a JOIN pessoas p ON p.id = a.cliente_id LEFT JOIN contas_bancarias c ON c.id = a.conta_id LEFT JOIN pessoas pg ON pg.id = a.pagador_id
      WHERE ' . implode(' AND ', $where) . ' ORDER BY a.data DESC, a.id DESC LIMIT 500'
 );
 $stmt->execute($params);
@@ -110,15 +110,16 @@ require __DIR__ . '/../../includes/layout_header.php';
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
-            <thead><tr><th>Data</th><th>Cliente</th><th>Descrição</th><th>Saiu de</th><th class="text-end">Valor</th><th class="text-end">Usado</th><th class="text-end">Em aberto</th><th></th></tr></thead>
+            <thead><tr><th>Data</th><th>Cliente</th><th>Pagador</th><th>Descrição</th><th>Saiu de</th><th class="text-end">Valor</th><th class="text-end">Usado</th><th class="text-end">Em aberto</th><th></th></tr></thead>
             <tbody>
             <?php if (!$adiantamentos): ?>
-                <tr><td colspan="8" class="text-center text-muted py-4">Nenhum repasse.</td></tr>
+                <tr><td colspan="9" class="text-center text-muted py-4">Nenhum repasse.</td></tr>
             <?php endif; ?>
             <?php foreach ($adiantamentos as $a): $aberto = $a['valor'] - $a['valor_utilizado']; ?>
                 <tr id="a<?= (int) $a['id'] ?>">
                     <td class="text-num"><?= formatDate($a['data']) ?></td>
                     <td><a href="/pessoas/form.php?id=<?= (int) $a['cliente_id'] ?>&tab=cliente" class="text-reset"><?= e($a['cliente_nome']) ?></a></td>
+                    <td><?= $a['pagador_id'] ? '<a href="/pessoas/form.php?id=' . (int) $a['pagador_id'] . '" class="text-reset">' . e($a['pagador_nome']) . '</a>' : '<span class="text-muted">-</span>' ?></td>
                     <td>
                         <?= e($a['descricao']) ?: '-' ?>
                         <?php if ($a['operacao_origem_id']): ?> <a href="/operacoes/ver.php?id=<?= (int) $a['operacao_origem_id'] ?>" class="small">ver operação</a><?php endif; ?>
