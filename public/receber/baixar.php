@@ -134,7 +134,7 @@ require __DIR__ . '/../../includes/layout_header.php';
         <?php if ($t['operacao_id']): ?><a href="/operacoes/ver.php?id=<?= (int) $t['operacao_id'] ?>" class="small">operação #<?= (int) $t['operacao_id'] ?></a><?php endif; ?>
         <span class="ms-auto d-flex gap-2">
             <?php if ($podeMexer): ?>
-                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="const d = document.getElementById('editar-titulo'); d.open = !d.open; d.scrollIntoView({block: 'nearest'});"><i class="bi bi-pencil"></i> Editar</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="const d = document.getElementById('editar-titulo'); d.classList.toggle('d-none'); if (!d.classList.contains('d-none')) { d.scrollIntoView({block: 'nearest'}); d.querySelector('[name=descricao]').focus(); }"><i class="bi bi-pencil"></i> Editar</button>
             <?php endif; ?>
             <?php if ($podeExcluir): ?>
                 <form method="post" class="d-inline" onsubmit="return confirm('Excluir este título?<?= $t['operacao_id'] && !$ehResidual ? ' Os totais da operação serão recalculados.' : '' ?>');"><input type="hidden" name="acao" value="excluir"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Excluir</button></form>
@@ -162,7 +162,7 @@ require __DIR__ . '/../../includes/layout_header.php';
     </div>
 
     <?php if ($atualizacao['dias'] > 0 && $atualizacao['total'] > $t['valor']): ?>
-    <div class="alert alert-danger py-2 small">Atualizado até hoje: <strong><?= formatMoney($atualizacao['total']) ?></strong> <span class="text-muted">(<?= e($atualizacao['origem']) ?>)</span></div>
+    <div class="alert alert-danger py-2 small" id="memorial-calculo" data-origem="<?= e($atualizacao['origem']) ?>"><?= memorialAtualizacao($t, $atualizacao, 'hoje') ?></div>
     <?php endif; ?>
 
     <?php if ($historico && $historico['total'] > 0): ?>
@@ -177,11 +177,13 @@ require __DIR__ . '/../../includes/layout_header.php';
     <?php endif; ?>
 
     <?php if ($podeMexer): ?>
-    <details class="card mb-3" id="editar-titulo" <?= !empty($_GET['editar']) ? 'open' : '' ?>><summary class="card-body py-2 fw-semibold small">Editar título</summary>
-        <div class="card-body pt-0">
+    <div class="card mb-3 <?= !empty($_GET['editar']) ? '' : 'd-none' ?>" id="editar-titulo">
+        <div class="card-body">
+            <div class="secao-titulo mb-2"><i class="bi bi-pencil"></i> Editar título</div>
             <form method="post">
                 <input type="hidden" name="acao" value="alterar">
                 <div class="row g-2">
+                    <div class="col-12"><label class="form-label small">Descrição</label><input type="text" name="descricao" class="form-control" maxlength="200" value="<?= e($t['descricao']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Tipo</label><select name="tipo" class="form-select"><?php foreach (tiposParaCampo($t['tipo']) as $k => $v): ?><option value="<?= $k ?>" <?= $t['tipo'] === $k ? 'selected' : '' ?>><?= $v ?></option><?php endforeach; ?></select></div>
                     <div class="col-md-3"><label class="form-label small">Valor (R$)</label><input type="text" name="valor" class="form-control" data-moeda inputmode="decimal" value="<?= formatDecimal($t['valor']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Vencimento</label><input type="date" name="data_vencimento" class="form-control" value="<?= e($t['data_vencimento']) ?>"></div>
@@ -190,14 +192,14 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <div class="col-md-6"><label class="form-label small">CPF/CNPJ do pagador <span class="text-muted">(se novo)</span></label><input type="text" name="pagador_documento" class="form-control" inputmode="numeric"></div>
                     <div class="col-md-3"><label class="form-label small">Banco</label><input type="text" name="banco_titulo" class="form-control" value="<?= e($t['banco_titulo']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Nº</label><input type="text" name="numero_titulo" class="form-control" value="<?= e($t['numero_titulo']) ?>"></div>
-                    <div class="col-md-6"><label class="form-label small">Descrição</label><input type="text" name="descricao" class="form-control" value="<?= e($t['descricao']) ?>"></div>
+                    <div class="col-md-6"></div>
                     <div class="col-12"><label class="form-label small">Observação</label><textarea name="observacao" class="form-control" rows="2"><?= e($t['observacao']) ?></textarea></div>
                     <?php if ($t['operacao_id'] && !$ehResidual): ?><div class="col-12 form-text">Mudando valor ou vencimento, os juros deste título e os totais da operação são recalculados.</div><?php endif; ?>
                     <div class="col-12 text-end"><button class="btn btn-sm btn-brand"><i class="bi bi-check-lg"></i> Salvar alterações</button></div>
                 </div>
             </form>
         </div>
-    </details>
+    </div>
     <?php endif; ?>
 
     <?php // Embaixo: o recebimento. ?>
@@ -206,7 +208,7 @@ require __DIR__ . '/../../includes/layout_header.php';
         <div class="secao-titulo"><i class="bi bi-wallet2"></i> Recebimento</div>
         <div class="card"><div class="card-body">
             <?php // Valor sugerido = atualizado até a data do recebimento (muda junto com a data). ?>
-            <form method="post" id="form-receber" data-valor="<?= e((string) $t['valor']) ?>" data-vencimento="<?= e($t['data_vencimento']) ?>"
+            <form method="post" id="form-receber" data-hoje="<?= date('Y-m-d') ?>" data-valor="<?= e((string) $t['valor']) ?>" data-vencimento="<?= e($t['data_vencimento']) ?>"
                   data-multa="<?= e((string) $atualizacao['multa_percent']) ?>" data-juros="<?= e((string) $atualizacao['juros_mes']) ?>">
                 <input type="hidden" name="acao" value="receber">
                 <div class="row g-2 align-items-end">
@@ -245,6 +247,16 @@ require __DIR__ . '/../../includes/layout_header.php';
                     const fmt = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                     devido = Math.round((valor + juros + multa) * 100) / 100;
                     campo.value = fmt(devido);
+                    // Memorial de cálculo na data escolhida.
+                    const memorial = document.getElementById('memorial-calculo');
+                    if (memorial && n > 0) {
+                        const pct = (v) => String(Math.round(v * 10000) / 10000).replace('.', ',');
+                        const hoje = data.value === d.hoje; // data do servidor (horário do Brasil)
+                        memorial.innerHTML = 'Atualizado ' + (hoje ? 'até hoje' : 'em ' + data.value.split('-').reverse().join('/')) + ': R$ ' + fmt(valor)
+                            + (multa ? ' + multa R$ ' + fmt(multa) + ' (' + pct(Number(d.multa)) + '%)' : '')
+                            + (juros ? ' + juros R$ ' + fmt(juros) + ' (' + pct(Number(d.juros)) + '% a.m. · ' + n + ' dia' + (n > 1 ? 's' : '') + ')' : '')
+                            + ' = <strong>R$ ' + fmt(devido) + '</strong> <span class="text-muted">(' + memorial.dataset.origem + ')</span>';
+                    }
                     mostrarDiferenca();
                 }
                 // Valor menor que o atualizado na data: mostra as opções para a diferença.

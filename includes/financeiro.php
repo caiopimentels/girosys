@@ -485,3 +485,17 @@ function quitarSemMovimentar(PDO $pdo, string $origem, int $id, string $data): v
         $pdo->prepare("UPDATE contas_pagar SET status = 'pago', valor_pago = ?, data_pagamento = ? WHERE id = ?")->execute([$total, $data, $id]);
     }
 }
+
+/** Memorial de cálculo da atualização: "R$ 960,77 + multa R$ 28,82 (3%) + juros R$ 1,92 (2% a.m. · 3 dias) = R$ 991,51". */
+function memorialAtualizacao(array $titulo, array $at, string $quando = 'hoje'): string
+{
+    $pct = fn ($v) => rtrim(rtrim(number_format((float) $v, 4, ',', '.'), '0'), ',');
+    $partes = ['Atualizado até ' . e($quando) . ': ' . formatMoney($titulo['valor'])];
+    if ($at['multa'] > 0) {
+        $partes[] = 'multa ' . formatMoney($at['multa']) . ' (' . $pct($at['multa_percent']) . '%)';
+    }
+    if ($at['juros'] > 0) {
+        $partes[] = 'juros ' . formatMoney($at['juros']) . ' (' . $pct($at['juros_mes']) . '% a.m. · ' . $at['dias'] . ' dia' . ($at['dias'] > 1 ? 's' : '') . ')';
+    }
+    return implode(' + ', $partes) . ' = <strong>' . formatMoney($at['total']) . '</strong> <span class="text-muted">(' . e($at['origem']) . ')</span>';
+}
