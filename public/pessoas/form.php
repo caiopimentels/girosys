@@ -241,7 +241,9 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
                 </div>
                 <div class="col-md-6"><label class="form-label" data-pf="Nome completo *" data-pj="Razão social *">Nome completo *</label><input type="text" name="nome" class="form-control" required value="<?= e($pessoa['nome']) ?>"></div>
                 <div class="col-md-6 so-pj"><label class="form-label">Nome fantasia</label><input type="text" name="nome_fantasia" class="form-control" value="<?= e($pessoa['nome_fantasia']) ?>"></div>
-                <div class="col-md-3"><label class="form-label" data-pf="CPF" data-pj="CNPJ">CPF</label><input type="text" name="documento" id="documento" class="form-control" inputmode="numeric" value="<?= e(documentoFormatado($pessoa['documento'])) ?>"><div class="invalid-feedback">Documento inválido.</div></div>
+                <div class="col-md-3"><label class="form-label" data-pf="CPF" data-pj="CNPJ">CPF</label><div class="input-group"><input type="text" name="documento" id="documento" class="form-control" inputmode="numeric" value="<?= e(documentoFormatado($pessoa['documento'])) ?>">
+                    <button type="button" class="btn btn-outline-secondary so-pj" id="buscar-cnpj" title="Buscar os dados na Receita e preencher (sobrescreve)"><i class="bi bi-search"></i> Buscar</button></div>
+                    <div class="form-text" id="cnpj-status"></div></div>
                 <div class="col-md-3"><label class="form-label" data-pf="RG" data-pj="Inscrição estadual">RG</label><input type="text" name="rg_ie" class="form-control" value="<?= e($pessoa['rg_ie']) ?>"></div>
                 <div class="col-md-3 so-pf"><label class="form-label">Data de nascimento</label><input type="date" name="data_nascimento" class="form-control" value="<?= e($pessoa['data_nascimento']) ?>"></div>
             </div>
@@ -431,6 +433,12 @@ document.querySelectorAll('[data-tab]').forEach(function (link) {
     }
     function formatarDoc() {
         let d = doc.value.replace(/\D/g, '');
+        // Mais de 11 dígitos com "pessoa física" marcada: é CNPJ — troca para jurídica.
+        if (tipo() === 'F' && d.length > 11) {
+            document.getElementById('tp-j').checked = true;
+            aplicar();
+            return;
+        }
         if (tipo() === 'J') {
             d = d.slice(0, 14);
             doc.value = d.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d)/, '$1-$2');
@@ -440,8 +448,68 @@ document.querySelectorAll('[data-tab]').forEach(function (link) {
         }
     }
     document.querySelectorAll('[name="tipo_pessoa"]').forEach((r) => r.addEventListener('change', aplicar));
-    doc.addEventListener('input', formatarDoc);
+    doc.addEventListener('input', () => { formatarDoc(); buscarSeCompleto(); });
     aplicar();
+
+    // ---- Busca de CNPJ (BrasilAPI, dados públicos da Receita) ----
+    // CNPJ completo e válido: busca sozinho e preenche só o que está em branco;
+    // o botão "Buscar" busca de novo e sobrescreve com os dados da Receita.
+    const status = document.getElementById('cnpj-status');
+    let ultimoBuscado = '';
+    function cnpjValido(c) {
+        if (c.length !== 14 || /^(\d)\1{13}$/.test(c)) return false;
+        const dig = (base, pesos) => { const r = pesos.reduce((s, p, i) => s + Number(base[i]) * p, 0) % 11; return r < 2 ? 0 : 11 - r; };
+        return dig(c, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]) === Number(c[12]) && dig(c, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]) === Number(c[13]);
+    }
+    const titulo = (t) => String(t || '').toLowerCase().replace(/(^|\s)(\S)/g, (m, e, l) => e + l.toUpperCase())
+        .replace(/ (De|Da|Do|Dos|Das|E) /g, (m) => m.toLowerCase());
+    function buscarSeCompleto() {
+        const c = doc.value.replace(/\D/g, '');
+        if (tipo() === 'J' && c.length === 14 && c !== ultimoBuscado) {
+            if (cnpjValido(c)) buscarCnpj(false);
+            else { status.className = 'form-text text-danger'; status.textContent = 'CNPJ inválido (confira os dígitos).'; }
+        }
+    }
+    function buscarCnpj(sobrescrever) {
+        const c = doc.value.replace(/\D/g, '');
+        if (!cnpjValido(c)) { status.className = 'form-text text-danger'; status.textContent = 'Digite um CNPJ válido para buscar.'; return; }
+        ultimoBuscado = c;
+        status.className = 'form-text'; status.textContent = 'Buscando na Receita...';
+        fetch('https://brasilapi.com.br/api/cnpj/v1/' + c)
+            .then((r) => { if (r.status === 404) throw new Error('nao'); if (!r.ok) throw new Error('erro'); return r.json(); })
+            .then((d) => {
+                const form = document.getElementById('form-pessoa');
+                const por = (nome, valor) => {
+                    const campo = form.querySelector('[name="' + nome + '"]');
+                    if (!campo || !valor || (!sobrescrever && campo.value.trim() !== '')) return;
+                    campo.value = valor;
+                    campo.dispatchEvent(new Event('input', { bubbles: true })); // máscaras (telefone)
+                };
+                por('nome', d.razao_social);
+                por('nome_fantasia', titulo(d.nome_fantasia));
+                const cep = String(d.cep || '').replace(/\D/g, '');
+                const campoCep = form.querySelector('[name="cep"]');
+                if (cep.length === 8 && (sobrescrever || !campoCep.value.trim())) campoCep.value = cep.slice(0, 5) + '-' + cep.slice(5);
+                por('logradouro', titulo([d.descricao_tipo_de_logradouro, d.logradouro].filter(Boolean).join(' ')));
+                por('numero', d.numero === 'SN' ? 'S/N' : d.numero);
+                por('complemento', titulo(d.complemento));
+                por('bairro', titulo(d.bairro));
+                por('cidade', titulo(d.municipio));
+                por('uf', d.uf);
+                por('telefone', d.ddd_telefone_1);
+                por('email', d.email ? d.email.toLowerCase() : '');
+                const ativa = String(d.descricao_situacao_cadastral || '').toUpperCase() === 'ATIVA';
+                const desde = d.data_inicio_atividade ? ' · aberta em ' + d.data_inicio_atividade.split('-').reverse().join('/') : '';
+                status.className = 'form-text ' + (ativa ? 'valor-positivo' : 'text-danger fw-semibold');
+                status.textContent = 'Receita: ' + (d.descricao_situacao_cadastral || 'situação não informada') + desde + (sobrescrever ? ' · dados preenchidos' : ' · campos vazios preenchidos');
+            })
+            .catch((e) => {
+                status.className = 'form-text text-danger';
+                status.textContent = e.message === 'nao' ? 'CNPJ não encontrado na Receita.' : 'Não foi possível consultar agora; preencha à mão.';
+                ultimoBuscado = '';
+            });
+    }
+    document.getElementById('buscar-cnpj').addEventListener('click', () => buscarCnpj(true));
 })();
 
 // CEP: busca o endereço no ViaCEP e preenche (só o que vier).
