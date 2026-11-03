@@ -23,6 +23,7 @@
     const lista = document.createElement('div');
     lista.className = 'typeahead-lista d-none';
     lista.style.right = 'auto';
+    lista.style.zIndex = 2000; // acima dos modais do Bootstrap (1055), p.ex. editar título no modal de detalhe
     document.body.appendChild(lista);
 
     let campoAtual = null;
