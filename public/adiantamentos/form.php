@@ -19,7 +19,7 @@ if ($id) {
     }
     $clienteNome = $repasse['cliente_nome'];
     $_POST += $_SERVER['REQUEST_METHOD'] === 'POST' ? [] : [
-        'data' => $repasse['data'], 'valor' => formatDecimal($repasse['valor']), 'conta_id' => $repasse['conta_id'], 'descricao' => $repasse['descricao'],
+        'data' => $repasse['data'], 'valor' => formatDecimal($repasse['valor']), 'conta_id' => $repasse['conta_id'] ?: 'sem', 'descricao' => $repasse['descricao'],
     ];
 }
 $soDescricao = $repasse && ((float) $repasse['valor_utilizado'] > 0 || $repasse['operacao_origem_id'] || $repasse['titulo_origem_id']);
@@ -39,7 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $clienteNome = input('cliente_nome');
     $data = dataInput('data');
     $valor = decimalInput('valor');
-    $contaId = idOuNull($_POST['conta_id'] ?? null);
+    // "sem" = lançamento antigo: o repasse fica em aberto, mas não mexe no saldo da conta.
+    $semConta = ($_POST['conta_id'] ?? '') === 'sem';
+    $contaId = $semConta ? null : idOuNull($_POST['conta_id'] ?? null);
     $descricao = input('descricao');
 
     if ($clienteNome === '') {
@@ -48,8 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$data || $valor <= 0) {
         $erros[] = 'Informe data e valor.';
     }
-    if (!$contaId) {
-        $erros[] = 'Escolha a conta de onde saiu o dinheiro.';
+    if (!$contaId && !$semConta) {
+        $erros[] = 'Escolha a conta de onde saiu o dinheiro (ou "Não movimentar conta", para lançamento antigo).';
     }
     if (!$erros && $id) {
         $pdo->beginTransaction();
@@ -58,7 +60,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ->execute([$clienteId, $data, round($valor, 2), $contaId, $descricao ?: null, $id]);
         // Refaz a saída no extrato da conta com os dados novos.
         removerMovimentacoes($pdo, 'adiantamento', $id);
-        lancarMovimentacao($pdo, $contaId, $data, 'saida', $valor, 'Repasse a ' . formatarNomePessoa($clienteNome) . ($descricao ? ' · ' . $descricao : ''), 'adiantamento', $id);
+        if ($contaId) {
+            lancarMovimentacao($pdo, $contaId, $data, 'saida', $valor, 'Repasse a ' . formatarNomePessoa($clienteNome) . ($descricao ? ' · ' . $descricao : ''), 'adiantamento', $id);
+        }
         $pdo->commit();
         flash('success', 'Repasse alterado.');
         redirect('/adiantamentos/listar.php');
@@ -96,12 +100,38 @@ require __DIR__ . '/../../includes/layout_header.php';
             <div class="col-md-3"><label class="form-label">CPF/CNPJ <span class="text-muted small">(se novo)</span></label><input type="text" name="cliente_documento" class="form-control" inputmode="numeric" <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($_POST['cliente_documento'] ?? '') ?>"></div>
             <div class="col-md-3"><label class="form-label">Data *</label><input type="date" name="data" class="form-control" required <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($_POST['data'] ?? date('Y-m-d')) ?>"></div>
             <div class="col-md-3"><label class="form-label">Valor (R$) *</label><input type="text" name="valor" class="form-control" data-moeda inputmode="decimal" required <?= $soDescricao ? 'disabled' : '' ?> value="<?= e($_POST['valor'] ?? '') ?>" <?= $clienteNome ? 'autofocus' : '' ?>></div>
-            <div class="col-md-4"><label class="form-label">Saiu da conta *</label><select name="conta_id" class="form-select" required <?= $soDescricao ? 'disabled' : '' ?>><?= opcoesContas($pdo, idOuNull($_POST['conta_id'] ?? null), 'Escolha...') ?></select></div>
+            <div class="col-md-4"><label class="form-label">Saiu da conta *</label><select name="conta_id" id="conta_saida" class="form-select" required <?= $soDescricao ? 'disabled' : '' ?>><?= opcoesContaSaida($pdo, (string) ($_POST['conta_id'] ?? '')) ?></select>
+                <div class="form-text" id="conta-saida-ajuda"></div></div>
             <div class="col-md-5"><label class="form-label">Descrição</label><input type="text" name="descricao" class="form-control" maxlength="200" placeholder="Ex.: Pix para pagar fornecedor" value="<?= e($_POST['descricao'] ?? '') ?>"></div>
         </div>
     </div>
 </form>
 <?= buscaPessoas($pdo) ?>
+<script>
+// Lançamento antigo: sem conta não mexe em saldo; com conta e data antes do
+// saldo inicial dela, avisa que o saldo de hoje vai mudar.
+(function () {
+    const conta = document.getElementById('conta_saida');
+    const data = document.querySelector('[name="data"]');
+    const ajuda = document.getElementById('conta-saida-ajuda');
+    const br = (iso) => iso.split('-').reverse().join('/');
+    function avisar() {
+        const op = conta.options[conta.selectedIndex];
+        ajuda.className = 'form-text';
+        if (conta.value === 'sem') {
+            ajuda.textContent = 'Fica em aberto no nome do cliente e corrige pela taxa desde a data, mas não sai de nenhuma conta.';
+        } else if (op && op.dataset.inicio && data.value && data.value < op.dataset.inicio) {
+            ajuda.className = 'form-text text-danger';
+            ajuda.textContent = 'Esta conta começou com saldo em ' + br(op.dataset.inicio) + ': lançar uma saída antes disso muda o saldo de hoje. Para lançamento antigo, use "Não movimentar conta".';
+        } else {
+            ajuda.textContent = '';
+        }
+    }
+    conta.addEventListener('change', avisar);
+    data.addEventListener('change', avisar);
+    avisar();
+})();
+</script>
 <script>
 // Mostra o limite de crédito do cliente e avisa se este valor passa dele.
 (function () {

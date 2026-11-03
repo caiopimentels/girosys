@@ -388,3 +388,17 @@ function camposGetExceto(array $exceto): string
     }
     return $html;
 }
+
+/**
+ * <option>s de "de qual conta saiu", com a escolha "não movimentar conta"
+ * (valor "sem") para lançar coisa antiga que o saldo inicial da conta já
+ * considera. data-inicio = data do saldo inicial (para avisar na tela).
+ */
+function opcoesContaSaida(PDO $pdo, string $selecionada = ''): string
+{
+    $html = '<option value="">Escolha...</option>';
+    foreach ($pdo->query('SELECT id, nome, data_saldo_inicial FROM contas_bancarias WHERE ativo = 1 ORDER BY nome')->fetchAll() as $c) {
+        $html .= '<option value="' . (int) $c['id'] . '" data-inicio="' . e($c['data_saldo_inicial']) . '"' . ((string) $c['id'] === $selecionada ? ' selected' : '') . '>' . e($c['nome']) . '</option>';
+    }
+    return $html . '<option value="sem"' . ($selecionada === 'sem' ? ' selected' : '') . '>Não movimentar conta (lançamento antigo)</option>';
+}

@@ -220,7 +220,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                 <div class="row g-2 mt-1 align-items-end">
                     <div class="col-md-2"><label class="form-label small">Data</label><input type="date" id="na-data" class="form-control form-control-sm" value="<?= date('Y-m-d') ?>"></div>
                     <div class="col-md-2"><label class="form-label small">Valor (R$)</label><input type="text" id="na-valor" class="form-control form-control-sm" data-moeda inputmode="decimal"></div>
-                    <div class="col-md-3"><label class="form-label small">Saiu da conta</label><select id="na-conta" class="form-select form-select-sm"><?= opcoesContas($pdo, null, 'Escolha...') ?></select></div>
+                    <div class="col-md-3"><label class="form-label small">Saiu da conta</label><select id="na-conta" class="form-select form-select-sm"><?= opcoesContaSaida($pdo) ?></select></div>
                     <div class="col-md-3"><label class="form-label small">Descrição</label><input type="text" id="na-descricao" class="form-control form-control-sm" maxlength="200"></div>
                     <div class="col-md-2"><button type="button" class="btn btn-sm btn-outline-secondary w-100" id="na-salvar"><i class="bi bi-plus-lg"></i> Lançar e marcar</button></div>
                     <div class="col-12 small text-danger" id="na-erro"></div>

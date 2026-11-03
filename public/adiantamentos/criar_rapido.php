@@ -7,10 +7,11 @@ $pdo = getDB();
 $clienteNome = input('cliente_nome');
 $data = dataInput('data');
 $valor = decimalInput('valor');
-$contaId = idOuNull($_POST['conta_id'] ?? null);
+$semConta = ($_POST['conta_id'] ?? '') === 'sem'; // lançamento antigo: não mexe em saldo
+$contaId = $semConta ? null : idOuNull($_POST['conta_id'] ?? null);
 
-if ($clienteNome === '' || !$data || $valor <= 0 || !$contaId) {
-    responderJson(['sucesso' => false, 'mensagem' => 'Informe cliente, data, valor e a conta de onde saiu.']);
+if ($clienteNome === '' || !$data || $valor <= 0 || (!$contaId && !$semConta)) {
+    responderJson(['sucesso' => false, 'mensagem' => 'Informe cliente, data, valor e a conta de onde saiu (ou "não movimentar conta").']);
 }
 
 $pdo->beginTransaction();
@@ -19,7 +20,7 @@ $id = registrarAdiantamento($pdo, $clienteId, $data, $valor, $contaId, input('de
 $pdo->commit();
 
 $conta = $pdo->prepare('SELECT nome FROM contas_bancarias WHERE id = ?');
-$conta->execute([$contaId]);
+$conta->execute([(int) $contaId]);
 
 responderJson(['sucesso' => true, 'adiantamento' => [
     'id' => $id,
