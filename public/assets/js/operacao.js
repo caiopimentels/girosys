@@ -383,7 +383,8 @@
 
     function calcularParcelas() {
         const alvo = Moeda.ler(campoAlvo.value);
-        const n = Math.max(1, Math.min(60, parseInt($('#parc-qtd').value, 10) || 1));
+        const n = parseInt($('#parc-qtd').value, 10) || 0;
+        if (n < 1 || n > 360) return { erro: 'Parcelas: de 1 a 360.' };
         const primeiro = $('#parc-venc').value;
         const base = $('#data_base').value;
         const taxa = taxaAtual();

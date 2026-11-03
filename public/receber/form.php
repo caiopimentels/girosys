@@ -87,12 +87,12 @@ require __DIR__ . '/../../includes/layout_header.php';
         <div class="collapse mb-2" id="dividir-igual"><div class="card card-body py-2">
             <div class="row g-2 align-items-end">
                 <div class="col-md-3"><label class="form-label small">Valor total (R$)</label><input type="text" class="form-control form-control-sm" id="div-total" data-moeda inputmode="decimal"></div>
-                <div class="col-md-2"><label class="form-label small">Parcelas</label><input type="number" class="form-control form-control-sm" id="div-qtd" min="1" max="60" value="3"></div>
+                <div class="col-md-2"><label class="form-label small">Parcelas</label><input type="number" class="form-control form-control-sm" id="div-qtd" min="1" max="360" value="3"></div>
                 <div class="col-md-2"><label class="form-label small">1º vencimento</label><input type="date" class="form-control form-control-sm" id="div-venc" value="<?= date('Y-m-d', strtotime('+30 days')) ?>"></div>
                 <div class="col-md-2"><label class="form-label small">Intervalo</label><select class="form-select form-select-sm" id="div-intervalo">
                     <option value="mes">Mensal</option><option value="7">Semanal</option><option value="15">Quinzenal (15 dias)</option><option value="30">A cada 30 dias</option><option value="x">A cada X dias...</option></select></div>
                 <div class="col-md-1 d-none" id="bloco-div-dias"><label class="form-label small">Dias</label><input type="number" class="form-control form-control-sm" id="div-dias" min="1" max="365" value="10"></div>
-                <div class="col-md-1"><button type="button" class="btn btn-sm btn-brand w-100" id="div-gerar">Preencher</button></div>
+                <div class="col-md-auto"><button type="button" class="btn btn-sm btn-brand text-nowrap" id="div-gerar">Preencher</button></div>
             </div>
         </div></div>
         <div class="card">
@@ -145,7 +145,8 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     document.getElementById('div-gerar').addEventListener('click', function () {
         const total = Moeda.ler(document.getElementById('div-total').value);
-        const n = Math.max(1, Math.min(60, parseInt(document.getElementById('div-qtd').value, 10) || 1));
+        const n = parseInt(document.getElementById('div-qtd').value, 10) || 0;
+        if (n < 1 || n > 360) { alert('Parcelas: de 1 a 360.'); return; }
         const venc = document.getElementById('div-venc').value;
         const escolha = document.getElementById('div-intervalo').value;
         const intervalo = escolha === 'x' ? String(Math.max(1, parseInt(document.getElementById('div-dias').value, 10) || 1)) : escolha;

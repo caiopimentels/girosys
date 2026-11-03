@@ -295,7 +295,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                 <p class="small text-muted">Quanto o cliente precisa cobrir (líquido) e em quantas parcelas: o sistema acha o valor de cada título, já descontados os juros de cada prazo pela taxa da operação.</p>
                 <div class="row g-3">
                     <div class="col-md-5"><label class="form-label">Líquido desejado (R$)</label><input type="text" class="form-control" id="parc-alvo" data-moeda inputmode="decimal"><div class="form-text" id="parc-alvo-ajuda"></div></div>
-                    <div class="col-md-3"><label class="form-label">Parcelas</label><input type="number" class="form-control" id="parc-qtd" min="1" max="60" value="3"></div>
+                    <div class="col-md-3"><label class="form-label">Parcelas</label><input type="number" class="form-control" id="parc-qtd" min="1" max="360" value="3"></div>
                     <div class="col-md-4"><label class="form-label">1º vencimento</label><input type="date" class="form-control" id="parc-venc"></div>
                     <div class="col-md-5"><label class="form-label">Intervalo entre as parcelas</label>
                         <select class="form-select" id="parc-intervalo"><option value="mes">Mensal (mesmo dia do mês)</option><option value="dias">A cada X dias</option></select></div>
