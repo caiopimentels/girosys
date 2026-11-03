@@ -163,9 +163,9 @@ $corUso = fn (float $pct) => $pct >= 90 ? 'bg-danger' : ($pct >= 70 ? 'bg-warnin
     <div class="card">
         <div class="table-responsive">
             <table class="table table-sm table-hover mb-0 align-middle">
-                <thead><tr><th>Compra</th><th>Cartão</th><th>Data</th><th>Categoria</th><th class="text-end">Total</th><th class="text-center">Parcelas pagas</th><th class="text-end">Falta pagar</th><th>Termina em</th></tr></thead>
+                <thead><tr><th>Compra</th><th>Cartão</th><th>Data</th><th>Categoria</th><th class="text-end">Total</th><th class="text-center">Parcelas pagas</th><th class="text-end">Falta pagar</th><th>Termina em</th><th></th></tr></thead>
                 <tbody>
-                <?php if (!$compras): ?><tr><td colspan="8" class="text-center text-muted py-3">Nenhuma compra em aberto.</td></tr><?php endif; ?>
+                <?php if (!$compras): ?><tr><td colspan="9" class="text-center text-muted py-3">Nenhuma compra em aberto.</td></tr><?php endif; ?>
                 <?php foreach ($compras as $cc): ?>
                     <tr class="cursor-pointer" onclick="window.location='/cartoes/compra.php?id=<?= (int) $cc['id'] ?>'">
                         <td><?= e($cc['descricao']) ?></td>
@@ -176,6 +176,8 @@ $corUso = fn (float $pct) => $pct >= 90 ? 'bg-danger' : ($pct >= 70 ? 'bg-warnin
                         <td class="text-center"><?= (int) $cc['pagas'] ?>/<?= (int) $cc['parcelas'] ?></td>
                         <td class="text-end text-num fw-semibold"><?= formatMoney($cc['restante']) ?></td>
                         <td><?= nomeMes($cc['ultima']) ?></td>
+                        <?= acoesLinha('/cartoes/compra.php?id=' . (int) $cc['id'], $cc['pagas'] > 0 ? null : '/cartoes/compra.php?id=' . (int) $cc['id'],
+                            'Excluir a compra "' . $cc['descricao'] . '" e todas as parcelas?', false, 'Tem parcela em fatura paga: estorne o pagamento da fatura antes') ?>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>

@@ -45,8 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($valor <= 0) {
                 throw new InvalidArgumentException('Informe o valor recebido.');
             }
+            // Recebeu menos que o atualizado na data: a diferença segue a escolha da tela.
+            $diferenca = round(atualizacaoReceber($pdo, $t, $data)['total'] - $valor, 2);
+            $modo = in_array($_POST['diferenca_modo'] ?? '', ['baixar', 'aberto', 'pagador', 'cliente'], true) ? $_POST['diferenca_modo'] : 'baixar';
+            $nota = tratarDiferencaRecebimento($pdo, $t, $data, $diferenca, $modo, dataInput('diferenca_vencimento'));
             baixarReceber($pdo, $t, $data, $valor, $conta);
-            flash('success', 'Recebimento de ' . formatMoney($valor) . ' lançado na conta.');
+            flash('success', 'Recebimento de ' . formatMoney($valor) . ' lançado na conta.' . $nota);
         } elseif ($acao === 'devolver' && in_array($t['status'], ['pendente', 'devolvido'], true)) {
             devolverReceber($pdo, $t, dataInput('data') ?? date('Y-m-d'), input('motivo'));
             flash('warning', 'Título marcado como devolvido. Fica no histórico do pagador.');
@@ -109,6 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $historico = $t['emitente_id'] ? historicoEmitente($pdo, (int) $t['emitente_id']) : null;
 $atualizacao = atualizacaoReceber($pdo, $t);
+$stmt = $pdo->prepare('SELECT * FROM contas_receber WHERE restante_de_id = ?');
+$stmt->execute([$id]);
+$restantes = $stmt->fetchAll();
 $status = statusTelaReceber($t);
 
 $pageTitle = ($ehResidual ? 'Residual' : tipoTituloLabel($t['tipo'])) . ' · ' . formatMoney($t['valor']);
@@ -150,6 +157,8 @@ require __DIR__ . '/../../includes/layout_header.php';
         <?php if ($t['devolvido_em']): ?><div class="valor-negativo mt-1">Devolução: <?= e($t['motivo_devolucao'] ?: formatDate($t['devolvido_em'])) ?></div><?php endif; ?>
         <?php if ($t['status'] === 'transferido'): ?><div class="fw-semibold mt-1">Devolvido para o cliente em <?= formatDate($t['data_recebimento']) ?> · virou repasse de <?= formatMoney($t['valor_recebido']) ?> em aberto de <?= e($t['cliente_nome']) ?></div><?php endif; ?>
         <?php if ($t['observacao']): ?><div class="mt-1"><?= nl2br(e($t['observacao'])) ?></div><?php endif; ?>
+        <?php if ($t['restante_de_id']): ?><div class="mt-1"><i class="bi bi-link-45deg"></i> Restante do <a href="#" onclick="event.preventDefault(); abrirDetalhe('/receber/baixar.php?id=<?= (int) $t['restante_de_id'] ?>')">título #<?= (int) $t['restante_de_id'] ?></a></div><?php endif; ?>
+        <?php foreach ($restantes as $rest): ?><div class="mt-1"><i class="bi bi-link-45deg"></i> Restante de <?= formatMoney($rest['valor']) ?> no <a href="#" onclick="event.preventDefault(); abrirDetalhe('/receber/baixar.php?id=<?= (int) $rest['id'] ?>')">título #<?= (int) $rest['id'] ?></a> · <?= e(statusTelaReceber($rest) === 'recebido' ? 'recebido' : 'em aberto') ?></div><?php endforeach; ?>
     </div>
 
     <?php if ($atualizacao['dias'] > 0 && $atualizacao['total'] > $t['valor']): ?>
@@ -206,6 +215,17 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <div class="col-md-4"><label class="form-label small">Entrou na conta</label><select name="conta_id" class="form-select" required><?= opcoesContas($pdo, idOuNull($t['conta_destino_id']), 'Escolha...') ?></select></div>
                     <div class="col-md-2"><button class="btn btn-brand w-100"><i class="bi bi-check-lg"></i> Receber</button></div>
                 </div>
+                <?php // Recebendo menos que o atualizado: o que fazer com a diferença. ?>
+                <div class="mt-3 p-2 rounded border d-none" id="bloco-diferenca">
+                    <div class="small fw-semibold mb-1">Faltam <span id="diferenca-valor"></span> para o atualizado. O que fazer com a diferença?</div>
+                    <label class="form-check small"><input type="radio" class="form-check-input" name="diferenca_modo" value="baixar" checked> Baixar assim mesmo (a diferença fica de desconto)</label>
+                    <label class="form-check small"><input type="radio" class="form-check-input" name="diferenca_modo" value="aberto"> Deixar o restante em aberto (novo título do mesmo pagador, vencendo na data do recebimento)</label>
+                    <label class="form-check small d-flex align-items-center gap-2 flex-wrap"><input type="radio" class="form-check-input" name="diferenca_modo" value="pagador"> Lançar a diferença para o pagador, vencendo em
+                        <input type="date" name="diferenca_vencimento" class="form-control form-control-sm" style="width: 160px;" value="<?= date('Y-m-d', strtotime('+30 days')) ?>"></label>
+                    <?php if ($t['cliente_id']): ?>
+                    <label class="form-check small"><input type="radio" class="form-check-input" name="diferenca_modo" value="cliente"> Lançar a diferença para o cliente <?= e($t['cliente_nome']) ?> (vira repasse em aberto)</label>
+                    <?php endif; ?>
+                </div>
             </form>
             <script>
             (function () {
@@ -223,8 +243,21 @@ require __DIR__ . '/../../includes/layout_header.php';
                     const juros = n > 0 ? Math.round(valor * Number(d.juros) / 100 / 30 * n * 100) / 100 : 0;
                     const multa = n > 0 ? Math.round(valor * Number(d.multa) / 100 * 100) / 100 : 0;
                     const fmt = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                    campo.value = fmt(valor + juros + multa);
+                    devido = Math.round((valor + juros + multa) * 100) / 100;
+                    campo.value = fmt(devido);
+                    mostrarDiferenca();
                 }
+                // Valor menor que o atualizado na data: mostra as opções para a diferença.
+                let devido = 0;
+                function mostrarDiferenca() {
+                    // Leitura local de "1.000,00" (o moeda.js só carrega no rodapé da página).
+                    let t = String(campo.value || '').replace(/[^\d,.-]/g, '');
+                    if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+                    const falta = Math.round((devido - (parseFloat(t) || 0)) * 100) / 100;
+                    document.getElementById('bloco-diferenca').classList.toggle('d-none', !(falta > 0.004));
+                    document.getElementById('diferenca-valor').textContent = 'R$ ' + falta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                }
+                campo.addEventListener('input', mostrarDiferenca);
                 data.addEventListener('change', atualizar);
                 atualizar();
             })();

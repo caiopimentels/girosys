@@ -359,9 +359,10 @@ function redirecionarAposAcao(string $padrao, bool $erro = false): void
  * acao=excluir e volta para esta lista. null = botão não aparece; string em
  * $motivoSemExcluir = botão desabilitado com a explicação no title.
  */
-function acoesLinha(?string $editar, ?string $excluir, string $confirmacao = 'Excluir este registro?', bool $noModal = false, string $motivoSemExcluir = ''): string
+function acoesLinha(?string $editar, ?string $excluir, string $confirmacao = 'Excluir este registro?', bool $noModal = false, string $motivoSemExcluir = '', string $antes = ''): string
 {
-    $html = '<td class="text-end text-nowrap acoes-linha" onclick="event.stopPropagation()">';
+    // $antes: botões extras antes do editar (ex.: "Receber").
+    $html = '<td class="text-end text-nowrap acoes-linha" onclick="event.stopPropagation()">' . $antes;
     if ($editar) {
         $html .= $noModal
             ? '<button type="button" class="btn btn-sm btn-outline-secondary" title="Editar" onclick="abrirDetalhe(' . e(json_encode($editar)) . ')"><i class="bi bi-pencil"></i></button> '

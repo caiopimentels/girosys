@@ -77,7 +77,12 @@ $informacoes = [
     ['Falta pagar', formatMoney($totFalta), $totFalta > 0 ? 'valor-negativo' : ''],
 ];
 $somasSelecao = ['valor' => 'Valor', 'falta' => 'Falta pagar'];
+$acoesLaterais = [['Pagar selecionados', 'bi-check2-all', 'abrirPagamentoLote()']];
 
+// Botão "Pagar" das contas em aberto: abre o modal já com a forma de pagamento.
+$botaoPagar = fn ($c) => $c['status'] === 'pendente'
+    ? '<button type="button" class="btn btn-sm btn-outline-success" title="Pagar" onclick="abrirDetalhe(\'' . ($c['tipo'] === 'fatura' ? '/cartoes/fatura.php?id=' : '/pagar/baixar.php?id=') . (int) $c['id'] . '\')"><i class="bi bi-check2-circle"></i></button> '
+    : '';
 $link = fn ($c) => $c['tipo'] === 'fatura' ? '/cartoes/fatura.php?id=' . (int) $c['id'] : '/pagar/baixar.php?id=' . (int) $c['id'];
 
 $pageTitle = 'Contas a pagar';
@@ -119,7 +124,7 @@ require __DIR__ . '/../../includes/layout_header.php';
             <?php endif; ?>
             <?php foreach ($contas as $c): $st = statusTelaPagar(['status' => $c['status'], 'data_vencimento' => $c['data_vencimento'], 'valor_pago' => $c['pago']]); ?>
                 <tr class="cursor-pointer" data-detalhe="<?= $link($c) ?>">
-                    <td><input type="checkbox" class="form-check-input selecao-item" data-valor="<?= e((string) $c['valor']) ?>" data-falta="<?= e((string) ($c['status'] === 'pendente' ? max(0, $c['valor'] - $c['pago']) : 0)) ?>"></td>
+                    <td><input type="checkbox" class="form-check-input selecao-item" value="<?= e($c['tipo'] . ':' . (int) $c['id']) ?>" data-aberto="<?= $c['status'] === 'pendente' ? 1 : 0 ?>" data-valor="<?= e((string) $c['valor']) ?>" data-falta="<?= e((string) ($c['status'] === 'pendente' ? max(0, $c['valor'] - $c['pago']) : 0)) ?>"></td>
                     <td class="text-num <?= $st === 'vencido' ? 'valor-negativo fw-semibold' : '' ?>"><?= formatDate($c['data_vencimento']) ?></td>
                     <td><?= $c['tipo'] === 'fatura' ? '<i class="bi bi-credit-card text-muted"></i> ' . e(preg_replace_callback('/(\d{4}-\d{2})$/', fn ($m) => nomeMes($m[1]), $c['descricao'])) : e($c['descricao']) ?></td>
                     <td><?= e($c['categoria_nome'] ?? '-') ?></td>
@@ -130,9 +135,9 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <td class="text-end text-num fw-semibold"><?= $c['status'] === 'pendente' ? formatMoney(max(0, $c['valor'] - $c['pago'])) : '-' ?></td>
                     <td><?= badgeStatus($st) ?><?= $c['status'] === 'pago' ? ' <span class="small text-muted">' . formatDate($c['data_pagamento']) . '</span>' : '' ?></td>
                     <?php if ($c['tipo'] === 'fatura'): ?>
-                        <?= acoesLinha($link($c), null, '', true, 'Fatura de cartão: para tirar, exclua a compra em Cartões de crédito') ?>
+                        <?= acoesLinha($link($c), null, '', true, 'Fatura de cartão: para tirar, exclua a compra em Cartões de crédito', $botaoPagar($c)) ?>
                     <?php else: ?>
-                        <?= acoesLinha($link($c) . '&editar=1', $c['pago'] > 0 ? null : $link($c), 'Excluir esta conta a pagar?', true, 'Já tem pagamento: estorne os pagamentos antes de excluir') ?>
+                        <?= acoesLinha($link($c) . '&editar=1', $c['pago'] > 0 ? null : $link($c), 'Excluir esta conta a pagar?', true, 'Já tem pagamento: estorne os pagamentos antes de excluir', $botaoPagar($c)) ?>
                     <?php endif; ?>
                 </tr>
             <?php endforeach; ?>
@@ -147,5 +152,73 @@ require __DIR__ . '/../../includes/layout_header.php';
 </div><!-- /pedidos-conteudo -->
 <?php require __DIR__ . '/../../includes/painel_lateral.php'; ?>
 </div><!-- /pedidos-layout -->
+
+<div class="modal fade" id="modal-pagar-lote" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" action="/pagar/pagar_lote.php" class="modal-content" id="form-pagar-lote">
+            <div class="modal-header"><h5 class="modal-title">Pagar selecionados</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="alert alert-light border small" id="pagar-lote-resumo"></div>
+                <input type="hidden" name="voltar" value="<?= e($_SERVER['REQUEST_URI'] ?? '/pagar/listar.php') ?>">
+                <div class="mb-2"><label class="form-label">Data do pagamento</label><input type="date" name="data" class="form-control" required value="<?= date('Y-m-d') ?>" style="max-width: 200px;"></div>
+                <label class="form-label mb-1">De quais contas saiu</label>
+                <div id="lote-partes"></div>
+                <button type="button" class="btn btn-sm btn-link px-0" id="lote-add-parte"><i class="bi bi-plus-lg"></i> Pagar parte por outra conta</button>
+                <div class="d-flex justify-content-between small p-2 rounded bg-body-tertiary mt-1"><span>Informado: <strong id="lote-informado">-</strong></span><span id="lote-falta"></span></div>
+                <div class="form-text mt-2">As contas marcadas são quitadas em ordem de vencimento, usando os valores na ordem acima. Faturas antigas que o saldo inicial já considera: escolha só "Não movimentar conta".</div>
+                <template id="modelo-lote-parte">
+                    <div class="input-group mb-2 parte">
+                        <select name="partes[__i][conta_id]" class="form-select" style="max-width: 60%;"><?= opcoesContaSaida($pdo) ?></select>
+                        <input type="text" name="partes[__i][valor]" class="form-control text-end" data-moeda inputmode="decimal">
+                        <button type="button" class="btn btn-outline-secondary remover-parte" title="Tirar"><i class="bi bi-x"></i></button>
+                    </div>
+                </template>
+                <div id="pagar-lote-ids"></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-brand"><i class="bi bi-check2-all"></i> Pagar todas</button></div>
+        </form>
+    </div>
+</div>
+<script>
+// Pagamento em lote: só as marcadas que ainda estão em aberto; o dinheiro
+// pode ter saído de várias contas (uma linha por conta).
+let totalLote = 0, seqLote = 0;
+function novaParteLote(valor) {
+    const caixa = document.getElementById('lote-partes');
+    caixa.insertAdjacentHTML('beforeend', document.getElementById('modelo-lote-parte').innerHTML.replaceAll('__i', seqLote++));
+    const linha = caixa.lastElementChild;
+    if (valor > 0) linha.querySelector('input').value = Moeda.formatar(valor);
+    return linha;
+}
+function conferirLote() {
+    const informado = [...document.querySelectorAll('#lote-partes input')].reduce((s, c) => s + Moeda.ler(c.value), 0);
+    const resto = Math.round((totalLote - informado) * 100) / 100;
+    const sem = [...document.querySelectorAll('#lote-partes select')].some((s) => s.value === 'sem');
+    document.getElementById('lote-informado').textContent = sem ? 'sem movimentar conta' : Moeda.reais(informado);
+    document.getElementById('lote-falta').innerHTML = sem ? '' : resto > 0.004 ? 'Falta distribuir <strong class="valor-negativo">' + Moeda.reais(resto) + '</strong>'
+        : resto < -0.004 ? '<span class="valor-negativo">Passou ' + Moeda.reais(-resto) + ' do total</span>' : '<span class="valor-positivo fw-semibold">Fecha o total</span>';
+    return resto;
+}
+document.addEventListener('DOMContentLoaded', () => {
+    const caixa = document.getElementById('lote-partes');
+    document.getElementById('lote-add-parte').addEventListener('click', () => { novaParteLote(Math.max(0, conferirLote())).querySelector('select').focus(); conferirLote(); });
+    caixa.addEventListener('click', (ev) => { if (ev.target.closest('.remover-parte') && caixa.children.length > 1) { ev.target.closest('.parte').remove(); conferirLote(); } });
+    caixa.addEventListener('input', conferirLote);
+    caixa.addEventListener('change', conferirLote);
+    caixa.addEventListener('focusout', () => setTimeout(conferirLote));
+});
+function abrirPagamentoLote() {
+    const marcadas = [...document.querySelectorAll('.selecao-item:checked')].filter((c) => c.dataset.aberto === '1');
+    if (!marcadas.length) { alert('Marque na lista as contas em aberto que quer pagar.'); return; }
+    const total = marcadas.reduce((s, c) => s + parseFloat(c.dataset.falta), 0);
+    totalLote = Math.round(total * 100) / 100;
+    document.getElementById('lote-partes').innerHTML = '';
+    novaParteLote(totalLote);
+    conferirLote();
+    document.getElementById('pagar-lote-resumo').innerHTML = '<strong>' + marcadas.length + ' conta(s)</strong> · ' + total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) + ' a pagar';
+    document.getElementById('pagar-lote-ids').innerHTML = marcadas.map((c) => '<input type="hidden" name="ids[]" value="' + c.value + '">').join('');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-pagar-lote')).show();
+}
+</script>
 
 <?php require __DIR__ . '/../../includes/layout_footer.php'; ?>

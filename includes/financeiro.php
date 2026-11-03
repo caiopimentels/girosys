@@ -434,3 +434,54 @@ function atualizacaoReceber(PDO $pdo, array $t, ?string $data = null): array
         'multa_percent' => $multaPct, 'juros_mes' => $jurosMes, 'origem' => $origem,
     ];
 }
+
+/**
+ * Recebimento a menor: o que fazer com a diferença entre o atualizado na
+ * data e o que entrou. $modo:
+ *   'baixar'  — quita assim mesmo (a diferença fica de desconto);
+ *   'aberto'  — o restante vira um título novo do mesmo pagador, vencendo na
+ *               data do recebimento (volta a correr juros dali);
+ *   'pagador' — idem, como cobrança separada, no vencimento escolhido;
+ *   'cliente' — o restante vira repasse em aberto do cliente da operação.
+ * Devolve uma frase para a mensagem de confirmação.
+ */
+function tratarDiferencaRecebimento(PDO $pdo, array $titulo, string $data, float $diferenca, string $modo, ?string $vencimento = null): string
+{
+    $diferenca = round($diferenca, 2);
+    if ($diferenca <= 0.004 || $modo === 'baixar') {
+        return $diferenca > 0.004 ? ' Diferença de ' . formatMoney($diferenca) . ' dada como desconto.' : '';
+    }
+    $nome = descricaoReceber($pdo, $titulo);
+    if ($modo === 'cliente') {
+        if (empty($titulo['cliente_id'])) {
+            throw new InvalidArgumentException('Este título não tem cliente para lançar a diferença.');
+        }
+        registrarAdiantamento($pdo, (int) $titulo['cliente_id'], $data, $diferenca, null, 'Diferença do recebimento · ' . $nome);
+        return ' Diferença de ' . formatMoney($diferenca) . ' lançada como repasse do cliente.';
+    }
+    $venc = $modo === 'pagador' && $vencimento ? $vencimento : $data;
+    $pdo->prepare(
+        'INSERT INTO contas_receber (restante_de_id, tipo, emitente_id, cliente_id, descricao, categoria_id, banco_titulo, numero_titulo, valor, data_vencimento, conta_destino_id, observacao)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )->execute([
+        $titulo['id'], $titulo['tipo'], $titulo['emitente_id'], $titulo['cliente_id'],
+        ($modo === 'pagador' ? 'Diferença de juros/multa · ' : 'Restante · ') . mb_substr($nome, 0, 150),
+        $titulo['categoria_id'], $titulo['banco_titulo'], $titulo['numero_titulo'], $diferenca, $venc, $titulo['conta_destino_id'],
+        'Recebido a menor em ' . formatDate($data) . ' (título #' . $titulo['id'] . ')',
+    ]);
+    return ' Restante de ' . formatMoney($diferenca) . ' ficou em aberto, vencendo em ' . formatDate($venc) . '.';
+}
+
+/**
+ * Dá como paga sem tirar dinheiro de conta (lançamento antigo, que o saldo
+ * inicial da conta já considera): pago = total, sem lançamento no extrato.
+ */
+function quitarSemMovimentar(PDO $pdo, string $origem, int $id, string $data): void
+{
+    $total = totalDevido($pdo, $origem, $id);
+    if ($origem === 'fatura') {
+        $pdo->prepare("UPDATE cartao_faturas SET status = 'paga', valor_pago = ?, data_pagamento = ? WHERE id = ?")->execute([$total, $data, $id]);
+    } else {
+        $pdo->prepare("UPDATE contas_pagar SET status = 'pago', valor_pago = ?, data_pagamento = ? WHERE id = ?")->execute([$total, $data, $id]);
+    }
+}

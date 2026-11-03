@@ -141,7 +141,10 @@ require __DIR__ . '/../../includes/layout_header.php';
                             'recebido' => 'Já recebido: estorne o recebimento antes de excluir',
                             'transferido' => 'Devolvido ao cliente: desfaça a devolução antes',
                             default => 'Já voltou devolvido: fica no histórico do pagador',
-                        }) ?>
+                        },
+                        in_array($t['status'], ['pendente', 'devolvido'], true)
+                            ? '<button type="button" class="btn btn-sm btn-outline-success" title="Receber" onclick="abrirDetalhe(\'/receber/baixar.php?id=' . (int) $t['id'] . '\')"><i class="bi bi-check2-circle"></i></button> '
+                            : '') ?>
                 </tr>
             <?php endforeach; ?>
             </tbody>

@@ -135,6 +135,7 @@ CREATE TABLE operacao_adiantamentos (
 CREATE TABLE contas_receber (
     id INT AUTO_INCREMENT PRIMARY KEY,
     operacao_id INT NULL,
+    restante_de_id INT NULL COMMENT 'título de onde veio este restante (recebimento a menor)',
     tipo VARCHAR(30) NOT NULL DEFAULT 'outro' COMMENT 'chave de tipos_recebimento',
     emitente_id INT NULL,
     cliente_id INT NULL COMMENT 'cliente da operação (quem me passou o título)',

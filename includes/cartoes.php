@@ -87,7 +87,7 @@ function excluirCompraCartao(PDO $pdo, int $compraId): void
     }
     $pdo->prepare('DELETE FROM cartao_compras WHERE id = ?')->execute([$compraId]);
     // Faturas que ficaram vazias e em aberto saem também.
-    $pdo->exec("DELETE f FROM cartao_faturas f LEFT JOIN cartao_parcelas p ON p.fatura_id = f.id WHERE p.id IS NULL AND f.status = 'aberta'");
+    $pdo->exec("DELETE f FROM cartao_faturas f LEFT JOIN cartao_parcelas p ON p.fatura_id = f.id WHERE p.id IS NULL AND f.status = 'aberta' AND f.valor_pago IS NULL");
 }
 
 function totalFatura(PDO $pdo, int $faturaId): float
@@ -110,4 +110,41 @@ function compromissosCartao(PDO $pdo, int $meses = 12): array
     );
     $stmt->execute([somarMesesCompetencia(date('Y-m'), $meses)]);
     return $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+}
+
+/** A compra tem parcela em fatura já paga? (aí só descrição e categoria mudam) */
+function compraTemParcelaPaga(PDO $pdo, int $compraId): bool
+{
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM cartao_parcelas p JOIN cartao_faturas f ON f.id = p.fatura_id WHERE p.compra_id = ? AND f.status = 'paga'");
+    $stmt->execute([$compraId]);
+    return (int) $stmt->fetchColumn() > 0;
+}
+
+/**
+ * Corrige uma compra lançada errada: troca os dados e refaz as parcelas nas
+ * faturas certas (as faturas que ficarem vazias e em aberto saem).
+ * Com parcela em fatura paga, só descrição e categoria mudam.
+ */
+function editarCompraCartao(PDO $pdo, int $compraId, array $cartao, string $descricao, ?int $categoriaId, string $dataCompra, float $total, int $parcelas, string $competenciaInicial = ''): void
+{
+    $pdo->beginTransaction();
+    try {
+        if (compraTemParcelaPaga($pdo, $compraId)) {
+            $pdo->prepare('UPDATE cartao_compras SET descricao = ?, categoria_id = ? WHERE id = ?')->execute([$descricao, $categoriaId, $compraId]);
+        } else {
+            $competencia = preg_match('/^\d{4}-\d{2}$/', $competenciaInicial) ? $competenciaInicial : competenciaDaCompra($cartao, $dataCompra);
+            $pdo->prepare('UPDATE cartao_compras SET cartao_id = ?, descricao = ?, categoria_id = ?, data_compra = ?, valor_total = ?, parcelas = ? WHERE id = ?')
+                ->execute([$cartao['id'], $descricao, $categoriaId, $dataCompra, $total, $parcelas, $compraId]);
+            $pdo->prepare('DELETE FROM cartao_parcelas WHERE compra_id = ?')->execute([$compraId]);
+            $ins = $pdo->prepare('INSERT INTO cartao_parcelas (compra_id, fatura_id, numero, valor) VALUES (?, ?, ?, ?)');
+            foreach (dividirParcelas($total, $parcelas) as $i => $valor) {
+                $ins->execute([$compraId, obterFatura($pdo, $cartao, somarMesesCompetencia($competencia, $i)), $i + 1, $valor]);
+            }
+            $pdo->exec("DELETE f FROM cartao_faturas f LEFT JOIN cartao_parcelas p ON p.fatura_id = f.id WHERE p.id IS NULL AND f.status = 'aberta' AND f.valor_pago IS NULL");
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
 }

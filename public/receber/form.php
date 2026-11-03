@@ -88,9 +88,11 @@ require __DIR__ . '/../../includes/layout_header.php';
             <div class="row g-2 align-items-end">
                 <div class="col-md-3"><label class="form-label small">Valor total (R$)</label><input type="text" class="form-control form-control-sm" id="div-total" data-moeda inputmode="decimal"></div>
                 <div class="col-md-2"><label class="form-label small">Parcelas</label><input type="number" class="form-control form-control-sm" id="div-qtd" min="1" max="60" value="3"></div>
-                <div class="col-md-3"><label class="form-label small">1º vencimento</label><input type="date" class="form-control form-control-sm" id="div-venc" value="<?= date('Y-m-d', strtotime('+30 days')) ?>"></div>
-                <div class="col-md-2"><label class="form-label small">A cada</label><select class="form-select form-select-sm" id="div-intervalo"><option value="mes">mês</option><option value="15">15 dias</option><option value="30">30 dias</option></select></div>
-                <div class="col-md-2"><button type="button" class="btn btn-sm btn-brand w-100" id="div-gerar">Preencher</button></div>
+                <div class="col-md-2"><label class="form-label small">1º vencimento</label><input type="date" class="form-control form-control-sm" id="div-venc" value="<?= date('Y-m-d', strtotime('+30 days')) ?>"></div>
+                <div class="col-md-2"><label class="form-label small">Intervalo</label><select class="form-select form-select-sm" id="div-intervalo">
+                    <option value="mes">Mensal</option><option value="7">Semanal</option><option value="15">Quinzenal (15 dias)</option><option value="30">A cada 30 dias</option><option value="x">A cada X dias...</option></select></div>
+                <div class="col-md-1 d-none" id="bloco-div-dias"><label class="form-label small">Dias</label><input type="number" class="form-control form-control-sm" id="div-dias" min="1" max="365" value="10"></div>
+                <div class="col-md-1"><button type="button" class="btn btn-sm btn-brand w-100" id="div-gerar">Preencher</button></div>
             </div>
         </div></div>
         <div class="card">
@@ -136,11 +138,17 @@ require __DIR__ . '/../../includes/layout_header.php';
 // (os centavos que sobram vão na primeira), que depois dá para ajustar.
 document.addEventListener('DOMContentLoaded', function () {
     const tabela = document.getElementById('parcelas-receber');
+    // "A cada X dias": mostra o campo para digitar o intervalo.
+    document.getElementById('div-intervalo').addEventListener('change', function () {
+        document.getElementById('bloco-div-dias').classList.toggle('d-none', this.value !== 'x');
+        if (this.value === 'x') document.getElementById('div-dias').focus();
+    });
     document.getElementById('div-gerar').addEventListener('click', function () {
         const total = Moeda.ler(document.getElementById('div-total').value);
         const n = Math.max(1, Math.min(60, parseInt(document.getElementById('div-qtd').value, 10) || 1));
         const venc = document.getElementById('div-venc').value;
-        const intervalo = document.getElementById('div-intervalo').value;
+        const escolha = document.getElementById('div-intervalo').value;
+        const intervalo = escolha === 'x' ? String(Math.max(1, parseInt(document.getElementById('div-dias').value, 10) || 1)) : escolha;
         if (!total || !venc) { alert('Informe o valor total e o 1º vencimento.'); return; }
         const base = Math.floor(total / n * 100) / 100;
         const [a, m, d] = venc.split('-').map(Number);
