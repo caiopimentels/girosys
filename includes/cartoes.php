@@ -23,7 +23,9 @@ function competenciaDaCompra(array $cartao, string $dataCompra): string
 
 function somarMesesCompetencia(string $competencia, int $meses): string
 {
-    return (new DateTimeImmutable($competencia . '-01'))->modify("+{$meses} months")->format('Y-m');
+    // sprintf('%+d'): "-1 months" / "+1 months". Montar "+{$meses}" dá "+-1 months", que
+    // algumas versões do PHP leem como +1 (a lista de faturas começava um mês adiante).
+    return (new DateTimeImmutable($competencia . '-01'))->modify(sprintf('%+d months', $meses))->format('Y-m');
 }
 
 function vencimentoDaFatura(array $cartao, string $competencia): string

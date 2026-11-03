@@ -175,7 +175,7 @@ function diasEntre(string $de, string $ate): int
 function somarMeses(string $data, int $meses): string
 {
     $base = new DateTimeImmutable($data);
-    $primeiro = $base->modify('first day of this month')->modify("+{$meses} months");
+    $primeiro = $base->modify('first day of this month')->modify(sprintf('%+d months', $meses));
     $dia = min((int) $base->format('d'), (int) $primeiro->format('t'));
     return $primeiro->setDate((int) $primeiro->format('Y'), (int) $primeiro->format('m'), $dia)->format('Y-m-d');
 }
