@@ -29,9 +29,9 @@ $erros = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir' && $id) {
     $stmt = $pdo->prepare(
         'SELECT (SELECT COUNT(*) FROM contas_receber WHERE emitente_id = ? OR cliente_id = ?) + (SELECT COUNT(*) FROM operacoes WHERE cliente_id = ?)
-              + (SELECT COUNT(*) FROM adiantamentos WHERE cliente_id = ?) + (SELECT COUNT(*) FROM contas_pagar WHERE pessoa_id = ?)'
+              + (SELECT COUNT(*) FROM adiantamentos WHERE cliente_id = ? OR pagador_id = ?) + (SELECT COUNT(*) FROM contas_pagar WHERE pessoa_id = ?)'
     );
-    $stmt->execute(array_fill(0, 5, $id));
+    $stmt->execute(array_fill(0, 6, $id));
     if ((int) $stmt->fetchColumn() > 0) {
         flash('danger', 'Este cadastro tem lançamentos (títulos, operações, repasses ou despesas) e não pode ser excluído.');
     } else {
@@ -113,6 +113,16 @@ if ($id) {
     $stmt->execute([$id, $recDeSql, $recAteSql]);
     $titulosPessoa = $stmt->fetchAll();
 
+    if ($papel === 'pagador') {
+        // Repasses em que ele é o pagador (o cliente é quem deve; o pagador fica registrado).
+        $stmt = $pdo->prepare(
+            'SELECT a.*, c.nome AS conta_nome, cl.nome AS cliente_nome, cl.taxa_padrao AS cliente_taxa
+             FROM adiantamentos a JOIN pessoas cl ON cl.id = a.cliente_id LEFT JOIN contas_bancarias c ON c.id = a.conta_id
+             WHERE a.pagador_id = ? AND a.data BETWEEN ? AND ?' . $filtroRepasses . ' ORDER BY a.data, a.id'
+        );
+        $stmt->execute([$id, $repDeSql, $repAteSql]);
+        $repassesPagador = $stmt->fetchAll();
+    }
     if ($ehCliente) {
         $stmt = $pdo->prepare('SELECT * FROM operacoes WHERE cliente_id = ? AND data_base BETWEEN ? AND ? ORDER BY data_base DESC, id DESC');
         $stmt->execute([$id, $opDeSql, $opAteSql]);
@@ -218,6 +228,9 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
     <li class="nav-item"><a class="nav-link <?= $tabAtiva === 'dados' ? 'active' : '' ?>" href="#" data-tab="dados">Dados</a></li>
     <?php if ($id && $papel !== 'fornecedor'): ?>
         <li class="nav-item"><a class="nav-link <?= in_array($tabAtiva, ['titulos', 'emitente'], true) ? 'active' : '' ?>" href="#" data-tab="titulos"><?= $ehCliente ? 'Recebimentos' : 'Títulos dele' ?> (<?= count($titulosPessoa) ?>)</a></li>
+    <?php endif; ?>
+    <?php if ($id && $papel === 'pagador'): ?>
+        <li class="nav-item"><a class="nav-link <?= $tabAtiva === 'repasses' ? 'active' : '' ?>" href="#" data-tab="repasses-pagador">Repasses (<?= count($repassesPagador) ?>)</a></li>
     <?php endif; ?>
     <?php if ($id && $ehCliente): ?>
         <li class="nav-item"><a class="nav-link <?= in_array($tabAtiva, ['repasses', 'cliente'], true) ? 'active' : '' ?>" href="#" data-tab="repasses">Repasses (<?= count($adiantamentos) ?>)</a></li>
@@ -327,6 +340,40 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
     </div>
 </div>
 <?php endif; ?>
+
+<?php if ($id && $papel === 'pagador'): ?>
+<div class="tab-pane" id="pane-repasses-pagador" style="<?= $tabAtiva === 'repasses' ? '' : 'display:none;' ?>">
+    <?php $filtroAba('repasses', 'rep_', $repSit, $repDe, $repAte, 'Data'); ?>
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 align-middle">
+                <thead><tr><th>Data</th><th>Cliente</th><th>Descrição</th><th>Saiu de</th><th class="text-end">Valor</th><th class="text-end">Corrigido hoje</th><th>Situação</th></tr></thead>
+                <tbody>
+                <?php if (!$repassesPagador): ?><tr><td colspan="7" class="text-center text-muted py-3">Nenhum repasse com este pagador<?= $repDe || $repAte ? ' no período' : '' ?>.</td></tr><?php endif; ?>
+                <?php $totRep = $totRepCorr = 0.0; foreach ($repassesPagador as $a):
+                    $aberto = round($a['valor'] - $a['valor_utilizado'], 2);
+                    $corr = $aberto > 0.004 ? $aberto + jurosSimples($aberto, (float) $a['cliente_taxa'], max(0, diasEntre($a['data'], date('Y-m-d')))) : 0;
+                    $totRep += $aberto > 0.004 ? $aberto : 0; $totRepCorr += $corr; ?>
+                    <tr class="cursor-pointer" onclick="window.location='/adiantamentos/form.php?id=<?= (int) $a['id'] ?>'">
+                        <td class="text-num"><?= formatDate($a['data']) ?></td>
+                        <td><a href="/pessoas/form.php?id=<?= (int) $a['cliente_id'] ?>&tab=repasses" class="text-reset" onclick="event.stopPropagation()"><?= e($a['cliente_nome']) ?></a></td>
+                        <td><?= e($a['descricao']) ?: '-' ?></td>
+                        <td><?= e($a['conta_nome'] ?? '—') ?></td>
+                        <td class="text-end text-num"><?= formatMoney($aberto > 0.004 ? $aberto : $a['valor']) ?></td>
+                        <td class="text-end text-num"><?= $aberto > 0.004 ? formatMoney($corr) : '-' ?></td>
+                        <td><?= $aberto > 0.004 ? '<span class="badge text-bg-warning">Em aberto</span>' : '<span class="badge text-bg-success">Quitado</span>' ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+                <?php if ($repassesPagador): ?>
+                <tfoot><tr class="fw-semibold"><td colspan="4">Em aberto</td><td class="text-end text-num valor-negativo"><?= formatMoney($totRep) ?></td><td class="text-end text-num"><?= formatMoney($totRepCorr) ?></td><td></td></tr></tfoot>
+                <?php endif; ?>
+            </table>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 
 <?php if ($id && $ehCliente): ?>
 <div class="tab-pane" id="pane-repasses" style="<?= in_array($tabAtiva, ['repasses', 'cliente'], true) ? '' : 'display:none;' ?>">

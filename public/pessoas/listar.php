@@ -20,7 +20,9 @@ $stmt = $pdo->prepare(
         (SELECT COUNT(*) FROM contas_receber r WHERE r.emitente_id = p.id AND r.status <> 'cancelado') AS titulos,
         (SELECT COUNT(*) FROM contas_receber r WHERE r.emitente_id = p.id OR r.cliente_id = p.id)
           + (SELECT COUNT(*) FROM operacoes o WHERE o.cliente_id = p.id) + (SELECT COUNT(*) FROM adiantamentos a WHERE a.cliente_id = p.id)
-          + (SELECT COUNT(*) FROM contas_pagar cp WHERE cp.pessoa_id = p.id) AS vinculos,
+          + (SELECT COUNT(*) FROM contas_pagar cp WHERE cp.pessoa_id = p.id) + (SELECT COUNT(*) FROM adiantamentos a WHERE a.pagador_id = p.id) AS vinculos,
+        (SELECT COUNT(*) FROM adiantamentos a WHERE a.pagador_id = p.id) AS repasses,
+        (SELECT COALESCE(SUM(a.valor - a.valor_utilizado), 0) FROM adiantamentos a WHERE a.pagador_id = p.id) AS repasses_aberto,
         (SELECT COALESCE(SUM(r.valor), 0) FROM contas_receber r WHERE r.emitente_id = p.id AND r.status IN ('pendente', 'devolvido')) AS a_receber
      FROM pessoas p WHERE " . implode(' AND ', $where) . ' ORDER BY p.nome LIMIT 1000'
 );
@@ -57,12 +59,12 @@ require __DIR__ . '/../../includes/layout_header.php';
             <thead><tr>
                 <th>Nome</th><th>CPF/CNPJ</th><th>Celular / telefone</th><th>Cidade</th>
                 <?php if ($papel === 'cliente'): ?><th class="text-end">Taxa</th><th class="text-end">Limite</th><th class="text-end">Crédito em uso</th><?php endif; ?>
-                <?php if ($papel === 'pagador'): ?><th class="text-center">Títulos</th><th class="text-end">A receber</th><th>Como pagador</th><?php endif; ?>
+                <?php if ($papel === 'pagador'): ?><th class="text-center">Títulos</th><th class="text-end">A receber</th><th class="text-center">Repasses</th><th class="text-end">Repasses em aberto</th><th>Como pagador</th><?php endif; ?>
                 <th></th><th></th>
             </tr></thead>
             <tbody>
             <?php if (!$pessoas): ?>
-                <tr><td colspan="10" class="text-center text-muted py-4">Ninguém encontrado.</td></tr>
+                <tr><td colspan="12" class="text-center text-muted py-4">Ninguém encontrado.</td></tr>
             <?php endif; ?>
             <?php foreach ($pessoas as $p): ?>
                 <tr class="cursor-pointer" onclick="window.location='/pessoas/form.php?id=<?= (int) $p['id'] ?>'">
@@ -78,6 +80,8 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <?php if ($papel === 'pagador'): ?>
                         <td class="text-center"><?= (int) $p['titulos'] ?></td>
                         <td class="text-end text-num"><?= formatMoney($p['a_receber']) ?></td>
+                        <td class="text-center"><?= (int) $p['repasses'] ?: '-' ?></td>
+                        <td class="text-end text-num <?= $p['repasses_aberto'] > 0.004 ? 'valor-negativo' : '' ?>"><?= $p['repasses'] ? formatMoney($p['repasses_aberto']) : '-' ?></td>
                         <td><?= $p['titulos'] > 0 ? badgeClassificacao(historicoEmitente($pdo, (int) $p['id'])['classificacao']) : '<span class="text-muted small">-</span>' ?></td>
                     <?php endif; ?>
                     <td class="text-end"><?= cadastroCompletoParaBoleto($p) ? '' : '<span class="badge text-bg-light" title="Faltam dados para emitir boleto">incompleto</span>' ?></td>
