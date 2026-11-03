@@ -67,3 +67,8 @@ html[data-bs-theme="dark"] .valor-negativo { color: #f87171 !important; }
     .pagina { padding: 0 !important; max-width: none !important; }
     .card { border: 0 !important; box-shadow: none !important; }
 }
+
+/* Tabela de parcelas (repasse e conta a receber com várias datas/valores). */
+.tabela-parcelas tbody { counter-reset: parcela; }
+.tabela-parcelas tbody tr { counter-increment: parcela; }
+.tabela-parcelas .numero-parcela::before { content: counter(parcela); }

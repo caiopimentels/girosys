@@ -33,6 +33,7 @@
 <script src="<?= e(assetUrl('/assets/js/filtro-periodo.js')) ?>"></script>
 <script src="<?= e(assetUrl('/assets/js/modal-detalhe.js')) ?>"></script>
 <script src="<?= e(assetUrl('/assets/js/selecao.js')) ?>"></script>
+<script src="<?= e(assetUrl('/assets/js/parcelas.js')) ?>"></script>
 <script>
 (function () {
     let restante = <?= (int) sessaoSegundosRestantes() ?>;
