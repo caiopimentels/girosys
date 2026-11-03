@@ -57,6 +57,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($acao === 'estornar' && $t['status'] === 'recebido') {
             estornarReceber($pdo, $t);
             flash('success', 'Recebimento estornado (saiu do extrato da conta).');
+        } elseif ($acao === 'emitir_boleto') {
+            $contaBoleto = contaBancaria($pdo, (int) ($_POST['boleto_conta_id'] ?? 0));
+            if (!$contaBoleto || pendenciasInter($contaBoleto)) {
+                throw new InvalidArgumentException('Escolha uma conta com a integração do Inter configurada.');
+            }
+            $pdo->commit(); // a emissão grava por conta própria (a chamada ao banco não pode ser desfeita)
+            emitirBoletoInter($pdo, $t, $contaBoleto);
+            flash('success', 'Boleto emitido no Banco Inter.');
+            redirecionarAposAcao('/receber/baixar.php?id=' . $id);
+        } elseif ($acao === 'consultar_boleto') {
+            $pdo->commit();
+            $situacao = consultarBoletoInter($pdo, $id);
+            flash('success', 'Situação no Inter: ' . rotuloSituacaoBoleto($situacao) . ($situacao === 'RECEBIDO' ? ' — baixa lançada.' : '.'));
+            redirecionarAposAcao('/receber/baixar.php?id=' . $id);
+        } elseif ($acao === 'cancelar_boleto') {
+            $pdo->commit();
+            cancelarBoletoInter($pdo, $t, input('motivo'));
+            flash('success', 'Boleto cancelado no Inter.');
+            redirecionarAposAcao('/receber/baixar.php?id=' . $id);
         } elseif ($acao === 'devolver_cliente' && in_array($t['status'], ['pendente', 'devolvido'], true)) {
             transferirParaCliente($pdo, $t, dataInput('data') ?? date('Y-m-d'), decimalInput('valor'));
             flash('success', 'Devolvido para ' . $t['cliente_nome'] . ': saiu do contas a receber e virou um repasse em aberto dele.');
@@ -103,8 +122,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new InvalidArgumentException('Título já recebido ou que já voltou devolvido não pode ser excluído (fica no histórico). Estorne o recebimento antes, se for o caso.');
         }
         $pdo->commit();
-    } catch (InvalidArgumentException $e) {
-        $pdo->rollBack();
+    } catch (InvalidArgumentException | RuntimeException $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         flash('danger', $e->getMessage());
         redirecionarAposAcao('/receber/baixar.php?id=' . $id, true);
     }
@@ -173,6 +194,55 @@ require __DIR__ . '/../../includes/layout_header.php';
         <span><strong><?= $historico['com_atraso'] ?></strong> com atraso</span>
         <span class="valor-negativo"><strong><?= $historico['devolvidos'] ?></strong> devolvido(s)</span>
         <span><strong><?= $historico['vencidos'] ?></strong> vencido(s) em aberto</span>
+    </div></div>
+    <?php endif; ?>
+
+    <?php // Boleto pelo Banco Inter (com Pix): emitir, linha digitável, PDF, consultar, cancelar. ?>
+    <?php $contasBoleto = contasInter($pdo); $temBoleto = $t['boleto_codigo'] && !in_array($t['boleto_situacao'], ['CANCELADO', 'EXPIRADO'], true); ?>
+    <?php if ($temBoleto || ($contasBoleto && in_array($t['status'], ['pendente', 'devolvido'], true))): ?>
+    <div class="card mb-3"><div class="card-body">
+        <div class="secao-titulo mb-2"><i class="bi bi-upc-scan"></i> Boleto
+            <?php if ($t['boleto_codigo']): ?><span class="badge <?= $t['boleto_situacao'] === 'RECEBIDO' ? 'text-bg-success' : (in_array($t['boleto_situacao'], ['CANCELADO', 'EXPIRADO'], true) ? 'text-bg-secondary' : 'text-bg-info') ?> ms-2"><?= e(rotuloSituacaoBoleto($t['boleto_situacao'])) ?></span><?php endif; ?>
+        </div>
+        <?php if ($temBoleto): ?>
+            <?php if ($t['boleto_linha_digitavel']): ?>
+                <div class="small text-muted">Linha digitável</div>
+                <div class="input-group input-group-sm mb-2"><input type="text" class="form-control text-num" readonly value="<?= e($t['boleto_linha_digitavel']) ?>" id="linha-digitavel">
+                    <button type="button" class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('linha-digitavel').value); this.textContent = 'Copiado';">Copiar</button></div>
+            <?php else: ?>
+                <div class="small text-muted mb-2">O Inter ainda está registrando o boleto — clique em "Consultar no Inter" em instantes para ver a linha digitável.</div>
+            <?php endif; ?>
+            <?php if ($t['boleto_pix']): ?>
+                <div class="small text-muted">Pix copia e cola</div>
+                <div class="input-group input-group-sm mb-2"><input type="text" class="form-control" readonly value="<?= e($t['boleto_pix']) ?>" id="pix-copia">
+                    <button type="button" class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('pix-copia').value); this.textContent = 'Copiado';">Copiar</button></div>
+            <?php endif; ?>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <?php if ($t['boleto_linha_digitavel']): ?><a href="/receber/boleto_pdf.php?id=<?= (int) $t['id'] ?>" target="_blank" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-pdf"></i> PDF do boleto</a><?php endif; ?>
+                <form method="post" class="d-inline"><input type="hidden" name="acao" value="consultar_boleto"><button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat"></i> Consultar no Inter</button></form>
+                <?php if ($t['boleto_situacao'] !== 'RECEBIDO'): ?>
+                <form method="post" class="d-inline" onsubmit="return confirm('Cancelar o boleto no Banco Inter?');"><input type="hidden" name="acao" value="cancelar_boleto"><input type="hidden" name="motivo" value="Cancelado pelo beneficiário"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Cancelar boleto</button></form>
+                <?php endif; ?>
+                <span class="small text-muted ms-auto">nº <?= e($t['boleto_nosso_numero'] ?: '-') ?> · emitido <?= formatDateTime($t['boleto_emitido_em']) ?></span>
+            </div>
+        <?php else: ?>
+            <?php $pagadorBoleto = null; if ($t['emitente_id']) { $st = $pdo->prepare('SELECT * FROM pessoas WHERE id = ?'); $st->execute([$t['emitente_id']]); $pagadorBoleto = $st->fetch(); } ?>
+            <?php $faltaBoleto = $pagadorBoleto ? faltandoParaBoleto($pagadorBoleto) : ['pagador']; ?>
+            <?php if ($t['boleto_codigo']): ?><div class="small text-muted mb-2">O boleto anterior está <?= e(mb_strtolower(rotuloSituacaoBoleto($t['boleto_situacao']))) ?>; dá para emitir outro.</div><?php endif; ?>
+            <?php if ($faltaBoleto): ?>
+                <div class="small">Para emitir, complete o cadastro do pagador: falta <strong><?= e(implode(', ', $faltaBoleto)) ?></strong>.
+                    <?php if ($t['emitente_id']): ?><a href="/pessoas/form.php?id=<?= (int) $t['emitente_id'] ?>" target="_blank">abrir cadastro</a><?php endif; ?></div>
+            <?php else: ?>
+                <form method="post" class="d-flex flex-wrap gap-2 align-items-end" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = 'Emitindo...';">
+                    <input type="hidden" name="acao" value="emitir_boleto">
+                    <div><label class="form-label small mb-1">Conta do Inter</label><select name="boleto_conta_id" class="form-select form-select-sm">
+                        <?php foreach ($contasBoleto as $cb): ?><option value="<?= (int) $cb['id'] ?>" <?= (int) $cb['id'] === (int) $t['conta_destino_id'] ? 'selected' : '' ?>><?= e($cb['nome']) ?></option><?php endforeach; ?></select></div>
+                    <button class="btn btn-sm btn-brand"><i class="bi bi-upc-scan"></i> Emitir boleto (<?= formatMoney($t['valor']) ?> · vence <?= formatDate($t['data_vencimento']) ?>)</button>
+                    <?php [$mBol, $jBol] = regraAtualizacao($pdo, $t); ?>
+                    <span class="small text-muted">Multa <?= $mBol > 0 ? e(rtrim(rtrim(formatDecimal($mBol, 2), '0'), ',')) . '%' : 'não' ?> · juros <?= $jBol > 0 ? e(rtrim(rtrim(formatDecimal($jBol, 2), '0'), ',')) . '% a.m.' : 'não' ?> (regra do tipo)</span>
+                </form>
+            <?php endif; ?>
+        <?php endif; ?>
     </div></div>
     <?php endif; ?>
 

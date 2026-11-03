@@ -40,12 +40,14 @@ if ($https) {
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/cripto.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/financeiro.php';
 require_once __DIR__ . '/desconto.php';
 require_once __DIR__ . '/cartoes.php';
 require_once __DIR__ . '/pagamento_ui.php';
 require_once __DIR__ . '/extrato_cliente.php';
+require_once __DIR__ . '/inter.php';
 
 csrfToken();
 

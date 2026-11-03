@@ -77,6 +77,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                             → <strong><?= formatMoney($c['saldo'] + $entra - $sai) ?></strong>
                         </div>
                         <a href="/contas/extrato.php?conta=<?= (int) $c['id'] ?>" class="btn btn-sm btn-outline-secondary mt-3"><i class="bi bi-list-ul"></i> Extrato</a>
+                        <a href="/contas/inter.php?id=<?= (int) $c['id'] ?>" class="btn btn-sm btn-outline-secondary mt-3"><i class="bi bi-upc-scan"></i> <?= ($c['integracao'] ?? '') === 'inter' ? 'Boletos Inter' : 'Integrar com Inter' ?></a>
                     </div>
                 </div>
             </div>

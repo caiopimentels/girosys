@@ -172,10 +172,10 @@ if (isset($_GET['csv'])) {
     header('Content-Disposition: attachment; filename="recebimentos-pagamentos-' . ($de ?: 'inicio') . '-a-' . ($ate ?: 'fim') . '.csv"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");
-    fputcsv($out, ['Data', 'Situação', 'Tipo', 'Descrição', 'Pessoa', 'Conta', 'Categoria', 'Entrada', 'Saída'], ';');
+    fputcsv($out, ['Data', 'Situação', 'Tipo', 'Descrição', 'Pessoa', 'Conta', 'Categoria', 'Entrada', 'Saída'], ';', '"', '');
     foreach ($linhas as $l) {
         fputcsv($out, [formatDate($l['data']), $l['situacao'] === 'realizado' ? 'Realizado' : 'Previsto', $rotuloTipo[$l['tipo']] ?? $l['tipo'], $descricao($l), $l['pessoa_nome'],
-            $l['conta_nome'], $l['categoria_nome'], $l['direcao'] === 'entrada' ? formatDecimal($l['valor']) : '', $l['direcao'] === 'saida' ? formatDecimal($l['valor']) : ''], ';');
+            $l['conta_nome'], $l['categoria_nome'], $l['direcao'] === 'entrada' ? formatDecimal($l['valor']) : '', $l['direcao'] === 'saida' ? formatDecimal($l['valor']) : ''], ';', '"', '');
     }
     exit;
 }

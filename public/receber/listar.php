@@ -43,7 +43,7 @@ if ($ate) {
 }
 
 $stmt = $pdo->prepare(
-    'SELECT r.*, e.nome AS emitente_nome, cl.nome AS cliente_nome, cl.taxa_padrao AS cliente_taxa, c.nome AS conta_nome
+    'SELECT r.*, e.nome AS emitente_nome, e.documento AS emitente_documento, cl.nome AS cliente_nome, cl.taxa_padrao AS cliente_taxa, c.nome AS conta_nome
      FROM contas_receber r
      LEFT JOIN pessoas e ON e.id = r.emitente_id
      LEFT JOIN pessoas cl ON cl.id = r.cliente_id
@@ -77,10 +77,97 @@ $informacoes = [
 $somasSelecao = ['valor' => 'Valor', 'atualizado' => 'Atualizado hoje'];
 $acoesLaterais = [['Receber selecionados', 'bi-check2-all', 'abrirBaixaLote()']];
 
+// Planilha (CSV para o Excel) com tudo o que está filtrado na tela.
+if (isset($_GET['csv'])) {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="contas-a-receber-' . date('Y-m-d') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF"); // acentos certos no Excel
+    fputcsv($out, ['Vencimento', 'Tipo', 'Pagador', 'CPF/CNPJ pagador', 'Cliente', 'Nº', 'Descrição', 'Valor', 'Atualizado hoje', 'Dias de atraso',
+        'Conta', 'Situação', 'Recebido em', 'Valor recebido', 'Operação'], ';', '"', '');
+    foreach ($titulos as $t) {
+        $at = $atualizacoes[$t['id']];
+        fputcsv($out, [
+            formatDate($t['data_vencimento']), tipoTituloLabel($t['tipo']), $t['emitente_nome'], documentoFormatado($t['emitente_documento']), $t['cliente_nome'],
+            $t['numero_titulo'], $t['descricao'], formatDecimal($t['valor']), formatDecimal($t['status'] === 'recebido' ? $t['valor_recebido'] : $at['total']),
+            $at['dias'] ?: '', $t['conta_nome'], ['vencido' => 'Vencido', 'pendente' => 'Pendente', 'recebido' => 'Recebido', 'devolvido' => 'Devolvido',
+                'cancelado' => 'Cancelado', 'transferido' => 'Devolvido ao cliente'][statusTelaReceber($t)] ?? $t['status'],
+            formatDate($t['data_recebimento']) === '-' ? '' : formatDate($t['data_recebimento']), $t['valor_recebido'] !== null ? formatDecimal($t['valor_recebido']) : '',
+            $t['operacao_id'] ? '#' . $t['operacao_id'] : '',
+        ], ';', '"', '');
+    }
+    exit;
+}
+
+// Relatório para imprimir / salvar em PDF, com os mesmos filtros da tela.
+if (isset($_GET['imprimir'])) {
+    $situacoesRel = ['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'cancelados' => 'Cancelados', 'todos' => 'Todos'];
+    $filtrosRel = array_filter([
+        'Situação: ' . ($situacoesRel[$situacao] ?? $situacao),
+        $tipo ? 'Tipo: ' . tipoTituloLabel($tipo) : null,
+        $contaId ? 'Conta: ' . ($pdo->query('SELECT nome FROM contas_bancarias WHERE id = ' . (int) $contaId)->fetchColumn()) : null,
+        $busca !== '' ? 'Busca: ' . $busca : null,
+        $de || $ate ? ($situacao === 'recebidos' ? 'Recebido' : 'Vencimento') . ': ' . ($de ? formatDate($de) : 'início') . ' a ' . ($ate ? formatDate($ate) : 'fim') : null,
+    ]);
+    ?>
+<!doctype html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8">
+    <title>Contas a receber · <?= date('d/m/Y') ?></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="<?= e(assetUrl('/assets/css/app.css')) ?>" rel="stylesheet">
+    <link href="<?= e(assetUrl('/assets/css/sistema.css')) ?>" rel="stylesheet">
+    <style>
+        body { background: #fff; font-size: .78rem; }
+        .folha { padding: 1rem 1.5rem; }
+        table td, table th { padding: .25rem .4rem !important; }
+        @media print { .nao-imprimir { display: none !important; } .folha { padding: 0; } @page { size: landscape; margin: 10mm; } }
+    </style>
+</head>
+<body>
+<div class="folha">
+    <div class="d-flex justify-content-between align-items-start border-bottom pb-2 mb-2">
+        <div><div class="fw-bold fs-5"><?= e(nomeSistema()) ?></div><div class="text-muted">Relatório de contas a receber</div></div>
+        <div class="text-end small text-muted"><?= e(implode(' · ', $filtrosRel)) ?><br>Emitido em <?= date('d/m/Y H:i') ?></div>
+    </div>
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Vencimento</th><th>Tipo</th><th>Pagador</th><th>Cliente</th><th>Nº</th><th>Conta</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Situação</th></tr></thead>
+        <tbody>
+        <?php foreach ($titulos as $t): $at = $atualizacoes[$t['id']]; $st = statusTelaReceber($t); ?>
+            <tr>
+                <td class="text-num <?= $st === 'vencido' ? 'valor-negativo' : '' ?>"><?= formatDate($t['data_vencimento']) ?></td>
+                <td><?= e(tipoTituloLabel($t['tipo'])) ?></td>
+                <td><?= e($t['emitente_nome'] ?? $t['descricao'] ?? '-') ?></td>
+                <td><?= e($t['cliente_nome'] ?? '-') ?></td>
+                <td><?= e($t['numero_titulo']) ?: '-' ?></td>
+                <td><?= e($t['conta_nome'] ?? '—') ?></td>
+                <td class="text-end text-num"><?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?></td>
+                <td class="text-end text-num <?= $at['total'] > $t['valor'] + 0.004 ? 'valor-negativo' : '' ?>"><?= $t['status'] === 'recebido' ? '-' : formatMoney($at['total']) ?></td>
+                <td><?= $st === 'vencido' || $st === 'devolvido' ? ($st === 'vencido' ? 'Vencido' : 'Devolvido') . ($at['dias'] ? ' há ' . $at['dias'] . ' dia' . ($at['dias'] > 1 ? 's' : '') : '')
+                    : (['pendente' => 'Pendente', 'recebido' => 'Recebido ' . formatDate($t['data_recebimento']), 'cancelado' => 'Cancelado', 'transferido' => 'Devolvido ao cliente'][$st] ?? $st) ?></td>
+            </tr>
+        <?php endforeach; ?>
+        <?php if (!$titulos): ?><tr><td colspan="9" class="text-center text-muted py-3">Nada com esses filtros.</td></tr><?php endif; ?>
+        </tbody>
+        <tfoot><tr class="fw-semibold"><td colspan="6"><?= count($titulos) ?> título(s)</td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td><td></td></tr></tfoot>
+    </table>
+    <div class="text-center mt-3 nao-imprimir"><button class="btn btn-brand" onclick="window.print()">Imprimir / salvar PDF</button></div>
+</div>
+<script>window.addEventListener('load', () => setTimeout(() => window.print(), 300));</script>
+</body>
+</html>
+    <?php
+    exit;
+}
+
 $pageTitle = 'Contas a receber';
 $pageBreadcrumb = 'Financeiro';
 $activeMenu = 'receber';
-$pageAction = '<a href="/receber/form.php" class="btn btn-outline-secondary"><i class="bi bi-plus-lg"></i> Lançamento avulso</a>'
+$pageAction = '<a href="?' . e(http_build_query(array_merge($_GET, ['imprimir' => 1]))) . '" target="_blank" class="btn btn-outline-secondary"><i class="bi bi-printer"></i> Imprimir</a>'
+    . '<a href="?' . e(http_build_query(array_merge($_GET, ['csv' => 1]))) . '" class="btn btn-outline-secondary"><i class="bi bi-filetype-csv"></i> Planilha</a>'
+    . '<a href="/receber/form.php" class="btn btn-outline-secondary"><i class="bi bi-plus-lg"></i> Lançamento avulso</a>'
     . '<a href="/operacoes/form.php" class="btn btn-brand"><i class="bi bi-calculator"></i> Nova operação</a>';
 require __DIR__ . '/../../includes/layout_header.php';
 ?>
@@ -108,10 +195,10 @@ require __DIR__ . '/../../includes/layout_header.php';
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
-            <thead><tr><th style="width: 32px;"><input type="checkbox" class="form-check-input selecao-todos" title="Marcar todos"></th><th>Vencimento</th><th>Tipo</th><th>Pagador</th><th>Cliente</th><th>Nº</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Conta</th><th>Situação</th><th></th></tr></thead>
+            <thead><tr><th style="width: 32px;"><input type="checkbox" class="form-check-input selecao-todos" title="Marcar todos"></th><th>Vencimento</th><th>Tipo<div class="small text-muted fw-normal">Conta</div></th><th>Pagador<div class="small text-muted fw-normal">Cliente</div></th><th>Nº</th><th class="text-end">Valor<div class="small text-muted fw-normal">Atualizado hoje</div></th><th>Situação</th><th></th></tr></thead>
             <tbody>
             <?php if (!$titulos): ?>
-                <tr><td colspan="11" class="text-center text-muted py-4">Nada por aqui.</td></tr>
+                <tr><td colspan="8" class="text-center text-muted py-4">Nada por aqui.</td></tr>
             <?php endif; ?>
             <?php foreach ($titulos as $t): ?>
                 <?php $podeExcluir = in_array($t['status'], ['pendente', 'devolvido', 'cancelado'], true) && (!$t['vezes_devolvido'] || $t['status'] === 'cancelado'); ?>
@@ -121,19 +208,22 @@ require __DIR__ . '/../../includes/layout_header.php';
                         data-atualizado="<?= e((string) ($t['status'] === 'recebido' ? $t['valor_recebido'] : $atualizacoes[$t['id']]['total'])) ?>"
                         data-aberto="<?= in_array($t['status'], ['pendente', 'devolvido'], true) ? 1 : 0 ?>"></td>
                     <td class="text-num <?= statusTelaReceber($t) === 'vencido' ? 'valor-negativo fw-semibold' : '' ?>"><?= formatDate($t['data_vencimento']) ?></td>
-                    <td><?= tipoTituloLabel($t['tipo']) ?></td>
+                    <?php $at = $atualizacoes[$t['id']]; $pagador = $t['emitente_nome'] ?? $t['descricao'] ?? '-'; ?>
+                    <td><?= e(tipoTituloLabel($t['tipo'])) ?><?php if ($t['boleto_codigo'] && !in_array($t['boleto_situacao'], ['CANCELADO', 'EXPIRADO'], true)): ?> <i class="bi bi-upc-scan text-muted" title="Boleto Inter: <?= e(rotuloSituacaoBoleto($t['boleto_situacao'])) ?>"></i><?php endif; ?><div class="small text-muted text-truncate" style="max-width: 150px;"><?= e($t['conta_nome'] ?? '—') ?></div></td>
                     <td>
-                        <?= e($t['emitente_nome'] ?? $t['descricao'] ?? '-') ?>
-                        <?php if (isset($classificacoes[$t['emitente_id']]) && $classificacoes[$t['emitente_id']] !== 'bom' && $classificacoes[$t['emitente_id']] !== 'sem_historico'): ?>
-                            <?= badgeClassificacao($classificacoes[$t['emitente_id']]) ?>
-                        <?php endif; ?>
+                        <div class="d-flex align-items-center gap-1">
+                            <span class="text-truncate" style="max-width: 300px;" title="<?= e($pagador) ?>"><?= e($pagador) ?></span>
+                            <?php if (isset($classificacoes[$t['emitente_id']]) && $classificacoes[$t['emitente_id']] !== 'bom' && $classificacoes[$t['emitente_id']] !== 'sem_historico'): ?>
+                                <?= badgeClassificacao($classificacoes[$t['emitente_id']]) ?>
+                            <?php endif; ?>
+                        </div>
+                        <div class="small text-muted text-truncate" style="max-width: 300px;"><?= $t['cliente_nome'] ? e($t['cliente_nome']) : '-' ?></div>
                     </td>
-                    <td><?= $t['cliente_nome'] ? e($t['cliente_nome']) : '<span class="text-muted">-</span>' ?></td>
                     <td><?= e($t['numero_titulo']) ?: '-' ?></td>
-                    <td class="text-end text-num"><?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?></td>
-                    <?php $at = $atualizacoes[$t['id']]; ?>
-                    <td class="text-end text-num"><?= $at['dias'] > 0 && $at['total'] > $t['valor'] ? '<span class="valor-negativo fw-semibold">' . formatMoney($at['total']) . '</span>' : '<span class="text-muted">-</span>' ?></td>
-                    <td><?= e($t['conta_nome'] ?? '—') ?></td>
+                    <td class="text-end text-num">
+                        <?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?>
+                        <?php if ($at['dias'] > 0 && $at['total'] > $t['valor']): ?><div class="small valor-negativo fw-semibold"><?= formatMoney($at['total']) ?></div><?php endif; ?>
+                    </td>
                     <td><?= badgeStatusAtraso(statusTelaReceber($t), $at['dias']) ?><?= $t['status'] === 'recebido' ? ' <span class="small text-muted">' . formatDate($t['data_recebimento']) . '</span>' : '' ?></td>
                     <?= acoesLinha('/receber/baixar.php?id=' . (int) $t['id'] . '&editar=1', $podeExcluir ? '/receber/baixar.php?id=' . (int) $t['id'] : null,
                         'Excluir este título?' . ($t['operacao_id'] ? ' Os totais da operação serão recalculados.' : ''), true,

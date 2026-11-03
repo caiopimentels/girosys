@@ -24,4 +24,10 @@ define('SESSAO_TIMEOUT_MINUTOS', 60);
 // no histórico do emitente (prazo normal de compensação do cheque).
 define('TOLERANCIA_COMPENSACAO_DIAS', 3);
 
+// Endereço público do sistema (com https), usado no webhook do Banco Inter.
+// Vazio = usa o endereço pelo qual o sistema foi acessado.
+define('URL_SISTEMA', '');
+// Só para testes locais: aponta a API do Inter para um simulador.
+define('INTER_URL_BASE', getenv('INTER_URL_BASE') ?: '');
+
 define('BASE_PATH', dirname(__DIR__));
