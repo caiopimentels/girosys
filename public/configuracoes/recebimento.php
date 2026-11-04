@@ -15,12 +15,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('danger', 'Este tipo já tem títulos (ou é o padrão "Outro"): desative em vez de excluir.');
         } else {
             $pdo->prepare('DELETE FROM tipos_recebimento WHERE tipo = ?')->execute([$tipo]);
+            registrarAtividade('tipos_recebimento', 'exclusao', 'Tipo de recebimento excluído: ' . tipoTituloLabel($tipo));
             flash('success', 'Tipo excluído.');
         }
         redirect('/configuracoes/recebimento.php');
     }
 
     $upd = $pdo->prepare('UPDATE tipos_recebimento SET nome = ?, ativo = ?, modo = ?, multa_percent = ?, juros_mes = ? WHERE tipo = ?');
+    $antesTipos = array_column($pdo->query('SELECT * FROM tipos_recebimento')->fetchAll(), null, 'tipo');
+    $mudancas = [];
     foreach ((array) ($_POST['config'] ?? []) as $tipo => $c) {
         $nome = trim((string) ($c['nome'] ?? '')) ?: tipoTituloLabel($tipo);
         $modo = array_key_exists($c['modo'] ?? '', modosAtualizacao()) ? $c['modo'] : 'cliente';
@@ -28,6 +31,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $juros = trim((string) ($c['juros'] ?? '')) === '' ? null : paraDecimal($c['juros']);
         $ativo = $tipo === 'outro' || !empty($c['ativo']) ? 1 : 0;
         $upd->execute([$nome, $ativo, $modo, $multa, $juros, (string) $tipo]);
+        $a = $antesTipos[$tipo] ?? [];
+        $num = fn ($v) => $v === null || $v === '' ? '' : rtrim(rtrim(number_format((float) $v, 4, ',', ''), '0'), ',');
+        $mudou = descreverAlteracoes(
+            ['nome' => $a['nome'] ?? '', 'ativo' => !empty($a['ativo']) ? 'sim' : 'não', 'modo' => modosAtualizacao()[$a['modo'] ?? ''] ?? '', 'multa' => $num($a['multa_percent'] ?? null), 'juros' => $num($a['juros_mes'] ?? null)],
+            ['nome' => $nome, 'ativo' => $ativo ? 'sim' : 'não', 'modo' => modosAtualizacao()[$modo], 'multa' => $num($multa), 'juros' => $num($juros)],
+            ['nome' => 'Nome', 'ativo' => 'Ativo', 'modo' => 'Atualizar por', 'multa' => 'Multa %', 'juros' => 'Juros % a.m.']);
+        if ($mudou !== 'nenhum campo alterado') {
+            $mudancas[] = $nome . ' (' . $mudou . ')';
+        }
     }
 
     $novoNome = trim((string) ($_POST['novo']['nome'] ?? ''));
@@ -44,6 +56,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ->execute([$chave, $novoNome, $modo, trim((string) ($n['multa'] ?? '')) === '' ? null : paraDecimal($n['multa']),
                 trim((string) ($n['juros'] ?? '')) === '' ? null : paraDecimal($n['juros'])]);
     }
+    if ($mudancas) {
+        registrarAtividade('tipos_recebimento', 'edicao', 'Tipos de recebimento: ' . implode('; ', $mudancas));
+    }
+    if ($novoNome !== '') {
+        registrarAtividade('tipos_recebimento', 'criacao', 'Tipo de recebimento criado: ' . $novoNome);
+    }
     flash('success', 'Tipos de recebimento salvos.' . ($novoNome !== '' ? ' "' . $novoNome . '" incluído.' : ''));
     redirect('/configuracoes/recebimento.php');
 }
@@ -52,10 +70,14 @@ $tipos = $pdo->query('SELECT * FROM tipos_recebimento ORDER BY ordem, nome')->fe
 $pct = fn ($v) => $v === null ? '' : rtrim(rtrim(formatDecimal($v, 4), '0'), ',');
 
 $pageTitle = 'Tipos de recebimento';
-$pageBreadcrumb = 'Cadastros';
+$pageBreadcrumb = 'Cadastros auxiliares';
 $activeMenu = 'config-recebimento';
 $pageAction = '<button type="submit" form="form-config" class="btn btn-brand"><i class="bi bi-check-lg"></i> Salvar</button>';
 require __DIR__ . '/../../includes/layout_header.php';
+$abaAtiva = 'auxiliares';
+require __DIR__ . '/../../includes/abas_configuracoes.php';
+$abaAuxiliar = 'tipos';
+require __DIR__ . '/../../includes/abas_cadastros_auxiliares.php';
 ?>
 
 <p class="text-muted" style="max-width: 900px;">

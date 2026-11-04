@@ -24,12 +24,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($acao === 'pagar' && $fatura['status'] === 'aberta') {
             $data = dataInput('data') ?? throw new InvalidArgumentException('Informe a data do pagamento.');
             registrarPagamentos($pdo, 'fatura', $id, $descricaoFatura, $data, partesPagamentoInput(), isset($_POST['quitar']));
+            registrarAtividade('cartoes', 'pagamento', $descricaoFatura . ' (total ' . formatMoney($total) . '): pago ' . descreverPartesPagamento(partesPagamentoInput()) . ' em ' . formatDate($data) . (isset($_POST['quitar']) ? ' (quitada)' : ''));
             flash('success', 'Pagamento da fatura lançado.');
         } elseif ($acao === 'estornar_parte') {
             estornarParte($pdo, 'fatura', $id, (int) ($_POST['movimentacao_id'] ?? 0));
+            registrarAtividade('cartoes', 'estorno', $descricaoFatura . ': pagamento estornado (lançamento #' . (int) ($_POST['movimentacao_id'] ?? 0) . ')');
             flash('success', 'Pagamento estornado; o valor voltou para a conta.');
         } elseif ($acao === 'reabrir' && $fatura['status'] === 'paga') {
             $pdo->prepare("UPDATE cartao_faturas SET status = 'aberta', data_pagamento = NULL WHERE id = ?")->execute([$id]);
+            registrarAtividade('cartoes', 'reabertura', $descricaoFatura . ' reaberta');
             flash('success', 'Fatura reaberta.');
         }
         $pdo->commit();

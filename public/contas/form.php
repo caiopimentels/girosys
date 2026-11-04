@@ -38,6 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare('INSERT INTO contas_bancarias (nome, banco, saldo_inicial, data_saldo_inicial, cor, ativo) VALUES (?, ?, ?, ?, ?, ?)')
                 ->execute($valores);
         }
+        registrarAtividade('contas_bancarias', $id ? 'edicao' : 'criacao', ($id ? 'Conta alterada: ' : 'Conta criada: ') . $conta['nome'] . ' · saldo inicial ' . formatMoney($conta['saldo_inicial']) . ' em ' . formatDate($conta['data_saldo_inicial']) . (!$conta['ativo'] ? ' · inativa' : ''));
         flash('success', 'Conta salva.');
         redirect(isset($_POST['salvar_outra']) ? '/contas/form.php' : '/contas/listar.php');
     }
@@ -50,6 +51,11 @@ $pageAction = '<a href="/contas/listar.php" class="btn btn-outline-secondary">Ca
     . (!$id ? '<button type="submit" form="form-conta" name="salvar_outra" value="1" class="btn btn-outline-secondary">Salvar e cadastrar outra</button>' : '')
     . '<button type="submit" form="form-conta" class="btn btn-brand"><i class="bi bi-check-lg"></i> Salvar</button>';
 require __DIR__ . '/../../includes/layout_header.php';
+if ($id) {
+    $contaAbaId = $id;
+    $contaAba = 'dados';
+    require __DIR__ . '/../../includes/abas_conta_bancaria.php';
+}
 ?>
 
 <?php if (isset($_GET['primeira'])): ?>

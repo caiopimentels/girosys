@@ -93,6 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'residual_modo' => $estado['residual_modo'],
             'residual_vencimento' => $estado['residual_vencimento'],
         ]);
+        registrarAtividade('operacoes', 'criacao', 'Gravada a ' . resumoOperacaoAuditoria($pdo, $operacaoId) . ($estado['pagar_diferenca'] ? ' · diferença paga ao cliente' : ''));
         flash('success', 'Operação #' . $operacaoId . ' gravada. Os títulos já estão em Contas a receber.');
         redirect('/operacoes/ver.php?id=' . $operacaoId);
     } catch (InvalidArgumentException $e) {

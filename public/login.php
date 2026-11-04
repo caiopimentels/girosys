@@ -14,26 +14,26 @@ $erro = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = mb_strtolower(input('email'));
     $senha = input('senha');
-    $chave = $email . '|' . ($_SERVER['REMOTE_ADDR'] ?? '');
 
     if ($primeiroAcesso) {
         $nome = formatarNomePessoa(input('nome'));
         if ($nome === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || mb_strlen($senha) < 8) {
             $erro = 'Informe nome, um e-mail válido e senha com pelo menos 8 caracteres.';
         } else {
-            $pdo->prepare('INSERT INTO usuarios (nome, email, senha) VALUES (?, ?, ?)')->execute([$nome, $email, password_hash($senha, PASSWORD_DEFAULT)]);
+            $pdo->prepare('INSERT INTO usuarios (nome, email, senha, perfil_id) VALUES (?, ?, ?, 1)')->execute([$nome, $email, password_hash($senha, PASSWORD_DEFAULT)]);
             tentarLogin($pdo, $email, $senha);
             redirect('/contas/form.php?primeira=1');
         }
     } elseif ($email === '' || $senha === '') {
         $erro = 'Informe e-mail e senha.';
-    } elseif (loginBloqueado($pdo, $chave)) {
+    } elseif (limiteDeTentativasExcedido($pdo, 'login', $email, 5, 20, 15)) {
         $erro = 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.';
     } elseif (tentarLogin($pdo, $email, $senha)) {
-        limparFalhasLogin($pdo, $chave);
+        limparTentativasAcesso($pdo, 'login', $email);
         redirect('/index.php');
     } else {
-        registrarFalhaLogin($pdo, $chave);
+        registrarTentativaAcesso($pdo, 'login', $email);
+        registrarTentativaLoginFalha($email);
         $erro = 'E-mail ou senha inválidos.';
     }
 }
@@ -51,12 +51,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600&display=swap" rel="stylesheet">
     <link href="<?= e(assetUrl('/assets/css/app.css')) ?>" rel="stylesheet">
-    <style>:root { --accent: <?= e(COR_PRIMARIA) ?>; --accent-dark: <?= e(COR_SECUNDARIA) ?>; }</style>
+    <?php if ($iconeAba = urlIconeAba()): ?><link rel="icon" type="image/png" href="<?= e($iconeAba) ?>"><?php endif; ?>
+    <style>:root { --accent: <?= e(corSistema('primaria')) ?>; --accent-dark: <?= e(corSistema('secundaria')) ?>; }</style>
 </head>
 <body class="login-page">
 <div class="login-card">
     <div class="mb-4 text-center">
-        <span class="login-logo"><span class="login-logo-letra"><?= e(mb_strtoupper(mb_substr($nomeSistema, 0, 1))) ?></span></span>
+        <span class="login-logo"><?= htmlLogoSistema('login') ?></span>
         <div class="login-marca"><?= e($nomeSistema) ?></div>
         <div class="login-sub"><?= $primeiroAcesso ? 'Crie o seu acesso para começar' : 'Entre com suas credenciais' ?></div>
     </div>
@@ -87,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <i class="bi bi-eye"></i>
                 </button>
             </div>
+            <?php if (!$primeiroAcesso): ?><a href="/recuperar_senha.php" class="login-esqueci">Esqueci minha senha</a><?php endif; ?>
         </div>
         <button type="submit" class="btn btn-brand w-100 py-2"><?= $primeiroAcesso ? 'Criar acesso' : 'Entrar' ?></button>
     </form>

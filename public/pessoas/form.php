@@ -36,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir
         flash('danger', 'Este cadastro tem lançamentos (títulos, operações, repasses ou despesas) e não pode ser excluído.');
     } else {
         $pdo->prepare('DELETE FROM pessoas WHERE id = ?')->execute([$id]);
+        registrarAtividade('pessoas', 'exclusao', papeisPessoa()[$pessoa['papel']] . ' excluído: ' . $pessoa['nome'] . ($pessoa['documento'] ? ' (' . documentoFormatado($pessoa['documento']) . ')' : ''));
         flash('success', 'Cadastro de ' . $pessoa['nome'] . ' excluído.');
     }
     redirecionarAposAcao('/pessoas/listar.php?papel=' . $pessoa['papel']);
@@ -78,6 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $erros[] = 'E-mail inválido.';
     }
 
+    $pessoaAntes = $pessoa;
     $pessoa = array_merge($pessoa, $novo);
     if (!$erros) {
         $valores = array_map(fn ($c) => $novo[$c], $campos);
@@ -87,6 +89,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare('INSERT INTO pessoas (papel, ' . implode(', ', $campos) . ') VALUES (?' . str_repeat(', ?', count($campos)) . ')')->execute([$papel, ...$valores]);
             $id = (int) $pdo->lastInsertId();
         }
+        $rotulosPessoa = ['nome' => 'Nome', 'nome_fantasia' => 'Nome fantasia', 'documento' => 'CPF/CNPJ', 'rg_ie' => 'RG/IE', 'data_nascimento' => 'Nascimento', 'telefone' => 'Telefone', 'celular' => 'Celular', 'email' => 'E-mail',
+            'taxa_padrao' => 'Taxa', 'limite_credito' => 'Limite de crédito', 'cep' => 'CEP', 'logradouro' => 'Logradouro', 'numero' => 'Número', 'complemento' => 'Complemento', 'bairro' => 'Bairro', 'cidade' => 'Cidade', 'uf' => 'UF', 'observacao' => 'Observação'];
+        registrarAtividade('pessoas', $pessoaAntes['nome'] ? 'edicao' : 'criacao', papeisPessoa()[$papel] . ' ' . $novo['nome'] . ($pessoaAntes['nome'] ? ': ' . descreverAlteracoes($pessoaAntes, $novo, $rotulosPessoa) : ' cadastrado'
+            . ($novo['documento'] ? ' (' . documentoFormatado($novo['documento']) . ')' : '') . ($novo['taxa_padrao'] !== null ? ' · taxa ' . formatDecimal($novo['taxa_padrao'], 2) . '%' : '')));
         flash('success', 'Cadastro salvo.');
         redirect('/pessoas/form.php?id=' . $id);
     }
@@ -183,7 +189,7 @@ require __DIR__ . '/../../includes/layout_header.php';
         <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body">
             <div class="kpi-rotulo">Pagos em dia / com atraso</div>
             <div class="kpi-valor"><span class="valor-positivo"><?= $historico['em_dia'] ?></span> / <span class="<?= $historico['com_atraso'] ? 'text-warning' : '' ?>"><?= $historico['com_atraso'] ?></span></div>
-            <div class="small text-muted">Em dia = até <?= (int) TOLERANCIA_COMPENSACAO_DIAS ?> dias após o vencimento</div>
+            <div class="small text-muted">Em dia = até <?= toleranciaCompensacaoDias() ?> dias após o vencimento</div>
         </div></div></div>
         <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body">
             <div class="kpi-rotulo">Devolvidos / vencidos em aberto</div>
@@ -329,7 +335,7 @@ $filtroAba = function (string $aba, string $prefixo, ?string $situacao, string $
                         <td><?= e($r['numero_titulo']) ?: '-' ?></td>
                         <td class="text-num"><?= formatDate($r['data_vencimento']) ?></td>
                         <td class="text-end text-num"><?= formatMoney($r['valor']) ?></td>
-                        <td class="text-num"><?= formatDate($r['data_recebimento']) ?><?php if ($atraso !== null && $atraso > TOLERANCIA_COMPENSACAO_DIAS): ?> <span class="small text-warning">(+<?= $atraso ?>d)</span><?php endif; ?></td>
+                        <td class="text-num"><?= formatDate($r['data_recebimento']) ?><?php if ($atraso !== null && $atraso > toleranciaCompensacaoDias()): ?> <span class="small text-warning">(+<?= $atraso ?>d)</span><?php endif; ?></td>
                         <td><?= e(($ehCliente ? $r['emitente_nome'] : $r['cliente_nome']) ?? '-') ?></td>
                         <td><?= badgeStatus(statusTelaReceber($r)) ?><?php if ($r['vezes_devolvido'] > 0 && $r['status'] !== 'devolvido'): ?> <span class="badge text-bg-light">já devolvido <?= (int) $r['vezes_devolvido'] ?>×</span><?php endif; ?></td>
                     </tr>

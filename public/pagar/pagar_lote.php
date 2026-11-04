@@ -55,6 +55,8 @@ usort($itens, fn ($a, $b) => $a['vencimento'] <=> $b['vencimento']);
 
 $quitadas = $parciais = 0;
 $total = 0.0;
+$partesInformadas = $partes;
+$pagos = [];
 $pdo->beginTransaction();
 foreach ($itens as $item) {
     $falta = round(totalDevido($pdo, $item['origem'], $item['id']) - $item['pago'], 2);
@@ -63,6 +65,7 @@ foreach ($itens as $item) {
     }
     if ($semConta) {
         quitarSemMovimentar($pdo, $item['origem'], $item['id'], $data);
+        $pagos[] = $item['descricao'] . ' ' . formatMoney($falta);
         $quitadas++;
         $total += $falta;
         continue;
@@ -83,8 +86,12 @@ foreach ($itens as $item) {
         break; // acabou o dinheiro informado
     }
     registrarPagamentos($pdo, $item['origem'], $item['id'], $item['descricao'], $data, $usar);
+    $pagos[] = $item['descricao'] . ' ' . formatMoney($falta - $precisa) . ($precisa > 0.004 ? ' (em parte)' : '');
     $precisa > 0.004 ? $parciais++ : $quitadas++;
     $total += $falta - $precisa;
+}
+if ($pagos) {
+    registrarAtividade('contas_pagar', 'pagamento', 'Pagamento em lote em ' . formatDate($data) . ' · ' . ($semConta ? 'sem movimentar conta' : descreverPartesPagamento($partesInformadas)) . ': ' . implode('; ', $pagos));
 }
 $pdo->commit();
 

@@ -2,6 +2,7 @@
 // Recebe vários títulos de uma vez (painel lateral de Contas a receber).
 require_once __DIR__ . '/../../includes/bootstrap.php';
 exigirLogin();
+exigirPermissaoAcao('baixar_receber', 'Seu perfil não pode dar baixa em recebimentos.');
 
 $pdo = getDB();
 $data = dataInput('data') ?? date('Y-m-d');
@@ -17,6 +18,7 @@ $stmt = $pdo->prepare(
 $recebidos = 0;
 $total = 0.0;
 $semConta = 0;
+$baixados = [];
 $pdo->beginTransaction();
 foreach ($ids as $id) {
     $stmt->execute([$id]);
@@ -30,8 +32,12 @@ foreach ($ids as $id) {
     }
     $valor = $atualizado ? atualizacaoReceber($pdo, $t, $data)['total'] : (float) $t['valor'];
     baixarReceber($pdo, $t, $data, $valor, $conta);
+    $baixados[] = '#' . $id . ' ' . ($t['emitente_nome'] ?? '') . ' ' . formatMoney($valor);
     $recebidos++;
     $total += $valor;
+}
+if ($baixados) {
+    registrarAtividade('contas_receber', 'baixa', 'Baixa em lote em ' . formatDate($data) . ' (' . $recebidos . ' título(s), total ' . formatMoney($total) . ($atualizado ? ', valor atualizado' : '') . '): ' . implode('; ', $baixados));
 }
 $pdo->commit();
 

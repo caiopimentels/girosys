@@ -20,6 +20,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir
         $pdo->beginTransaction();
         removerMovimentacoes($pdo, 'adiantamento', (int) $a['id']);
         $pdo->prepare('DELETE FROM adiantamentos WHERE id = ?')->execute([$a['id']]);
+        $stmt = $pdo->prepare('SELECT nome FROM pessoas WHERE id = ?');
+        $stmt->execute([$a['cliente_id']]);
+        registrarAtividade('repasses', 'exclusao', 'Repasse #' . $a['id'] . ' excluído: ' . $stmt->fetchColumn() . ' · ' . formatMoney($a['valor']) . ' em ' . formatDate($a['data']));
         $pdo->commit();
         flash('success', 'Repasse excluído; o valor voltou para a conta.');
     }

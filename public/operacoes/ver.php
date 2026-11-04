@@ -7,7 +7,9 @@ $id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir') {
     try {
+        $resumo = resumoOperacaoAuditoria($pdo, $id);
         excluirOperacao($pdo, $id);
+        registrarAtividade('operacoes', 'exclusao', 'Excluída a ' . $resumo);
         flash('success', 'Operação #' . $id . ' excluída. Títulos removidos e repasses liberados.');
         redirecionarAposAcao('/operacoes/listar.php');
     } catch (InvalidArgumentException $e) {
@@ -22,8 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'editar'
     if (!$dataBase || $taxa < 0 || $taxa > 100) {
         flash('danger', 'Informe data base e taxa válidas.');
     } else {
+        $antes = resumoOperacaoAuditoria($pdo, $id);
         $pdo->beginTransaction();
         editarOperacao($pdo, $id, $dataBase, $taxa, (int) input('dias_compensacao', '0'), input('observacao'));
+        registrarAtividade('operacoes', 'recalculo', 'Recalculada: antes ' . $antes . ' · agora ' . preg_replace('/^operação #\d+ de [^(]+/', '', resumoOperacaoAuditoria($pdo, $id)));
         $pdo->commit();
         flash('success', 'Operação recalculada com os novos dados. A diferença já paga ao cliente e o residual lançado não mudam.');
     }

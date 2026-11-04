@@ -12,6 +12,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([(int) $_POST['id']]);
         if ($mov = $stmt->fetch()) {
             removerMovimentacoes($pdo, $mov['origem'], (int) $mov['origem_id']);
+            $nomeConta = $pdo->prepare('SELECT nome FROM contas_bancarias WHERE id = ?');
+            $nomeConta->execute([$mov['conta_id']]);
+            registrarAtividade('contas_bancarias', 'exclusao', ($mov['origem'] === 'transferencia' ? 'Transferência excluída' : 'Lançamento manual excluído') . ' (' . $nomeConta->fetchColumn() . '): '
+                . $mov['descricao'] . ' · ' . ($mov['tipo'] === 'entrada' ? '+' : '-') . formatMoney($mov['valor']) . ' em ' . formatDate($mov['data']));
             flash('success', $mov['origem'] === 'transferencia' ? 'Transferência excluída (as duas pontas).' : 'Lançamento excluído.');
         }
         redirect($voltar);
@@ -27,6 +31,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $movId = lancarMovimentacao($pdo, $contaId, $data, $tipo, $valor, $descricao, 'ajuste');
         $pdo->prepare('UPDATE movimentacoes SET origem_id = id WHERE id = ?')->execute([$movId]);
+        $nomeConta = $pdo->prepare('SELECT nome FROM contas_bancarias WHERE id = ?');
+        $nomeConta->execute([$contaId]);
+        registrarAtividade('contas_bancarias', 'criacao', 'Lançamento manual no ' . $nomeConta->fetchColumn() . ': ' . $descricao . ' · ' . ($tipo === 'entrada' ? '+' : '-') . formatMoney($valor) . ' em ' . formatDate($data));
         flash('success', 'Lançamento registrado.');
     }
     redirect($voltar);

@@ -34,6 +34,7 @@ if ($id) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir' && $id) {
     try {
         excluirCompraCartao($pdo, $id);
+        registrarAtividade('cartoes', 'exclusao', 'Compra excluída do ' . ($cartoesPorId[$compra['cartao_id']]['nome'] ?? 'cartão') . ': ' . $compra['descricao'] . ' · ' . $compra['parcelas'] . 'x · total ' . formatMoney($compra['valor_total']) . ' em ' . formatDate($compra['data_compra']));
         flash('success', 'Compra excluída das faturas.');
         redirecionarAposAcao('/cartoes/listar.php');
     } catch (InvalidArgumentException $e) {
@@ -57,11 +58,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir
     }
     if (!$erros && $id) {
         editarCompraCartao($pdo, $id, $cartao, $descricao, idOuNull($_POST['categoria_id'] ?? null), $data, $total, $n, input('primeira_fatura'));
+        registrarAtividade('cartoes', 'edicao', 'Compra #' . $id . ' corrigida: ' . descreverAlteracoes(
+            ['cartao' => ($cartoesPorId[$compra['cartao_id']]['nome'] ?? 'cartão'), 'descricao' => $compra['descricao'], 'data' => formatDate($compra['data_compra']), 'total' => formatMoney($compra['valor_total']), 'parcelas' => $compra['parcelas'] . 'x', 'categoria' => $compra['categoria_id']],
+            ['cartao' => $cartao['nome'], 'descricao' => $descricao, 'data' => formatDate($data), 'total' => formatMoney($total), 'parcelas' => $n . 'x', 'categoria' => idOuNull($_POST['categoria_id'] ?? null)],
+            ['cartao' => 'Cartão', 'descricao' => 'Descrição', 'data' => 'Data', 'total' => 'Total', 'parcelas' => 'Parcelas', 'categoria' => 'Categoria (id)']));
         flash('success', $travada ? 'Descrição e categoria alteradas (a compra tem parcela em fatura paga).' : "Compra corrigida: {$n}x de " . formatMoney($total / $n) . ' no ' . $cartao['nome'] . '.');
         redirect('/cartoes/listar.php');
     }
     if (!$erros) {
         lancarCompraCartao($pdo, $cartao, $descricao, idOuNull($_POST['categoria_id'] ?? null), $data, $total, $n, input('primeira_fatura'));
+        registrarAtividade('cartoes', 'criacao', 'Compra no ' . $cartao['nome'] . ': ' . $descricao . ' · ' . $n . 'x de ' . formatMoney($total / $n) . ' (total ' . formatMoney($total) . ') em ' . formatDate($data));
         flash('success', "Compra lançada em {$n}x de " . formatMoney($total / $n) . ' no ' . $cartao['nome'] . '.');
         redirect(isset($_POST['salvar_outra']) ? '/cartoes/compra.php?cartao=' . $cartao['id'] : '/cartoes/listar.php');
     }

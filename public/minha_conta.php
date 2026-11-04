@@ -20,8 +20,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($senhaNova !== '' && mb_strlen($senhaNova) < 8) {
         $erros[] = 'A senha nova precisa ter pelo menos 8 caracteres.';
     }
-    if (!password_verify($senhaAtual, $usuario['senha'])) {
-        $erros[] = 'Senha atual incorreta.';
+    if (!senhaDoUsuarioConfere($pdo, $senhaAtual)) {
+        $erros[] = 'Senha atual incorreta (depois de 5 erros, aguarde 15 minutos).';
+    }
+    $stmt = $pdo->prepare('SELECT id FROM usuarios WHERE email = ? AND id <> ?');
+    $stmt->execute([$email, $usuario['id']]);
+    if ($stmt->fetch()) {
+        $erros[] = 'Já existe outro usuário com este e-mail.';
     }
 
     if (!$erros) {
@@ -29,6 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $nome, $email, $senhaNova !== '' ? password_hash($senhaNova, PASSWORD_DEFAULT) : $usuario['senha'], $usuario['id'],
         ]);
         $_SESSION['user_nome'] = $nome;
+        registrarAtividade('usuarios', $senhaNova !== '' ? 'senha' : 'edicao', 'Minha conta: ' . descreverAlteracoes(
+            ['nome' => $usuario['nome'], 'email' => $usuario['email'], 'senha' => ''], ['nome' => $nome, 'email' => $email, 'senha' => $senhaNova !== '' ? 'x' : ''],
+            ['nome' => 'Nome', 'email' => 'E-mail', 'senha' => 'Senha'], ['senha']));
         flash('success', 'Dados atualizados.');
         redirect('/minha_conta.php');
     }

@@ -16,6 +16,8 @@ if (!$conta) {
     redirect('/pagar/listar.php');
 }
 
+$rotuloConta = 'conta a pagar #' . $id . ' (' . $conta['descricao'] . ', ' . formatMoney($conta['valor']) . ', vence ' . formatDate($conta['data_vencimento']) . ($conta['pessoa_nome'] ? ', ' . $conta['pessoa_nome'] : '') . ')';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? '';
     $pdo->beginTransaction();
@@ -23,22 +25,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($acao === 'pagar' && $conta['status'] === 'pendente') {
             $data = dataInput('data') ?? throw new InvalidArgumentException('Informe a data do pagamento.');
             registrarPagamentos($pdo, 'pagar', $id, $conta['descricao'], $data, partesPagamentoInput(), isset($_POST['quitar']));
+            registrarAtividade('contas_pagar', 'pagamento', 'Pago ' . descreverPartesPagamento(partesPagamentoInput()) . ' em ' . formatDate($data) . (isset($_POST['quitar']) ? ' (quitada)' : '') . ': ' . $rotuloConta);
             flash('success', 'Pagamento lançado.');
         } elseif ($acao === 'estornar_parte') {
             estornarParte($pdo, 'pagar', $id, (int) ($_POST['movimentacao_id'] ?? 0));
+            registrarAtividade('contas_pagar', 'estorno', 'Pagamento estornado (lançamento #' . (int) ($_POST['movimentacao_id'] ?? 0) . '): ' . $rotuloConta);
             flash('success', 'Pagamento estornado; o valor voltou para a conta.');
         } elseif ($acao === 'reabrir' && $conta['status'] === 'pago') {
             // Quitada com desconto: volta a pendente sem mexer nas partes pagas.
             $pdo->prepare("UPDATE contas_pagar SET status = 'pendente', data_pagamento = NULL WHERE id = ?")->execute([$id]);
+            registrarAtividade('contas_pagar', 'reabertura', 'Conta reaberta: ' . $rotuloConta);
             flash('success', 'Conta reaberta.');
         } elseif ($acao === 'alterar' && $conta['status'] === 'pendente') {
             $venc = dataInput('data_vencimento') ?? $conta['data_vencimento'];
             $pdo->prepare('UPDATE contas_pagar SET descricao = ?, valor = ?, data_vencimento = ?, categoria_id = ?, conta_id = ?, observacao = ? WHERE id = ?')
                 ->execute([input('descricao') ?: $conta['descricao'], decimalInput('valor') ?: $conta['valor'], $venc, idOuNull($_POST['categoria_id'] ?? null), idOuNull($_POST['conta_id'] ?? null), input('observacao') ?: null, $id]);
             atualizarSituacaoPagamento($pdo, 'pagar', $id);
+            registrarAtividade('contas_pagar', 'edicao', 'Alterada a ' . $rotuloConta . ': ' . descreverAlteracoes(
+                ['descricao' => $conta['descricao'], 'valor' => formatMoney($conta['valor']), 'vencimento' => formatDate($conta['data_vencimento']), 'categoria' => $conta['categoria_id'], 'conta' => $conta['conta_id'], 'observacao' => $conta['observacao']],
+                ['descricao' => input('descricao') ?: $conta['descricao'], 'valor' => formatMoney(decimalInput('valor') ?: $conta['valor']), 'vencimento' => formatDate($venc), 'categoria' => idOuNull($_POST['categoria_id'] ?? null), 'conta' => idOuNull($_POST['conta_id'] ?? null), 'observacao' => input('observacao') ?: null],
+                ['descricao' => 'Descrição', 'valor' => 'Valor', 'vencimento' => 'Vencimento', 'categoria' => 'Categoria (id)', 'conta' => 'Conta (id)', 'observacao' => 'Observação']));
             flash('success', 'Conta alterada.');
         } elseif ($acao === 'excluir' && !(float) $conta['valor_pago']) {
             $pdo->prepare('DELETE FROM contas_pagar WHERE id = ?')->execute([$id]);
+            registrarAtividade('contas_pagar', 'exclusao', 'Excluída a ' . $rotuloConta);
             $pdo->commit();
             flash('success', 'Conta excluída.');
             redirecionarAposAcao('/pagar/listar.php');

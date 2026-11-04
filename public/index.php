@@ -1,6 +1,16 @@
 <?php
 require_once __DIR__ . '/../includes/bootstrap.php';
 exigirLogin();
+// Sem o Início liberado: vai para a primeira tela que o perfil pode ver.
+if (!usuarioTemPermissao('ver_dashboard')) {
+    foreach (['operacoes' => '/operacoes/listar.php', 'receber' => '/receber/listar.php', 'pagar' => '/pagar/listar.php', 'contas' => '/contas/listar.php',
+        'repasses' => '/adiantamentos/listar.php', 'cartoes' => '/cartoes/listar.php', 'pessoas' => '/pessoas/listar.php?papel=cliente', 'movimentacao' => '/financeiro/movimentacao.php'] as $permissao => $url) {
+        if (usuarioTemPermissao($permissao)) {
+            redirect($url);
+        }
+    }
+    redirect('/sem_acesso.php');
+}
 
 $pdo = getDB();
 $hoje = date('Y-m-d');

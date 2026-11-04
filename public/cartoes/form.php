@@ -13,6 +13,7 @@ if ($id) {
 
 $erros = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $cartaoAntes = $cartao;
     $cartao = [
         'nome' => input('nome'),
         'bandeira' => input('bandeira'),
@@ -35,6 +36,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $pdo->prepare('INSERT INTO cartoes (nome, bandeira, dia_fechamento, dia_vencimento, limite, conta_pagamento_id, ativo) VALUES (?, ?, ?, ?, ?, ?, ?)')->execute($valores);
         }
+        $rotulos = ['nome' => 'Nome', 'bandeira' => 'Bandeira', 'dia_fechamento' => 'Fechamento', 'dia_vencimento' => 'Vencimento', 'limite' => 'Limite', 'conta_pagamento_id' => 'Conta de pagamento (id)', 'ativo' => 'Ativo'];
+        registrarAtividade('cartoes', $id ? 'edicao' : 'criacao', $id ? 'Cartão ' . $cartao['nome'] . ': ' . descreverAlteracoes($cartaoAntes, $cartao, $rotulos)
+            : 'Cartão cadastrado: ' . $cartao['nome'] . ' · fecha dia ' . $cartao['dia_fechamento'] . ', vence dia ' . $cartao['dia_vencimento'] . ($cartao['limite'] !== null ? ', limite ' . formatMoney($cartao['limite']) : ''));
         flash('success', 'Cartão salvo.');
         redirect('/cartoes/listar.php');
     }

@@ -34,8 +34,17 @@ $podeMexer = in_array($t['status'], ['pendente', 'devolvido', 'cancelado'], true
 // Recebido ou que já voltou devolvido fica no histórico do pagador: não sai.
 $podeExcluir = $podeMexer && (!$t['vezes_devolvido'] || $t['status'] === 'cancelado');
 
+// Como o título aparece na auditoria.
+$rotuloTitulo = 'título #' . $id . ' (' . tipoTituloLabel($t['tipo']) . ' ' . formatMoney($t['valor']) . ', vence ' . formatDate($t['data_vencimento'])
+    . ($t['emitente_nome'] ? ', pagador ' . $t['emitente_nome'] : '') . ($t['cliente_nome'] ? ', cliente ' . $t['cliente_nome'] : '') . ')';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? '';
+    if (in_array($acao, ['receber', 'devolver', 'estornar', 'devolver_cliente', 'desfazer_cliente'], true)) {
+        exigirPermissaoAcao('baixar_receber', 'Seu perfil não pode dar baixa nem estornar recebimentos.');
+    } elseif (in_array($acao, ['emitir_boleto', 'cancelar_boleto'], true)) {
+        exigirPermissaoAcao('emitir_boleto', 'Seu perfil não pode emitir nem cancelar boletos.');
+    }
     $pdo->beginTransaction();
     try {
         if ($acao === 'receber' && in_array($t['status'], ['pendente', 'devolvido'], true)) {
@@ -50,12 +59,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $modo = in_array($_POST['diferenca_modo'] ?? '', ['baixar', 'aberto', 'pagador', 'cliente'], true) ? $_POST['diferenca_modo'] : 'baixar';
             $nota = tratarDiferencaRecebimento($pdo, $t, $data, $diferenca, $modo, dataInput('diferenca_vencimento'));
             baixarReceber($pdo, $t, $data, $valor, $conta);
+            registrarAtividade('contas_receber', 'baixa', 'Recebido ' . formatMoney($valor) . ' em ' . formatDate($data) . ' do ' . $rotuloTitulo . ($diferenca > 0.004 ? ' · diferença ' . formatMoney($diferenca) . ' (' . $modo . ')' : ''));
             flash('success', 'Recebimento de ' . formatMoney($valor) . ' lançado na conta.' . $nota);
         } elseif ($acao === 'devolver' && in_array($t['status'], ['pendente', 'devolvido'], true)) {
             devolverReceber($pdo, $t, dataInput('data') ?? date('Y-m-d'), input('motivo'));
+            registrarAtividade('contas_receber', 'devolucao', 'Marcado como devolvido (' . (input('motivo') ?: 'sem motivo') . '): ' . $rotuloTitulo);
             flash('warning', 'Título marcado como devolvido. Fica no histórico do pagador.');
         } elseif ($acao === 'estornar' && $t['status'] === 'recebido') {
             estornarReceber($pdo, $t);
+            registrarAtividade('contas_receber', 'estorno', 'Recebimento estornado (' . formatMoney($t['valor_recebido']) . ' de ' . formatDate($t['data_recebimento']) . '): ' . $rotuloTitulo);
             flash('success', 'Recebimento estornado (saiu do extrato da conta).');
         } elseif ($acao === 'emitir_boleto') {
             $contaBoleto = contaBancaria($pdo, (int) ($_POST['boleto_conta_id'] ?? 0));
@@ -64,26 +76,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $pdo->commit(); // a emissão grava por conta própria (a chamada ao banco não pode ser desfeita)
             emitirBoletoInter($pdo, $t, $contaBoleto);
+            registrarAtividade('boletos', 'emissao_boleto', 'Boleto emitido no ' . $contaBoleto['nome'] . ' para o ' . $rotuloTitulo);
             flash('success', 'Boleto emitido no Banco Inter.');
             redirecionarAposAcao('/receber/baixar.php?id=' . $id);
         } elseif ($acao === 'consultar_boleto') {
             $pdo->commit();
             $situacao = consultarBoletoInter($pdo, $id);
+            registrarAtividade('boletos', 'consulta_boleto', 'Boleto consultado (' . rotuloSituacaoBoleto($situacao) . '): ' . $rotuloTitulo);
             flash('success', 'Situação no Inter: ' . rotuloSituacaoBoleto($situacao) . ($situacao === 'RECEBIDO' ? ' — baixa lançada.' : '.'));
             redirecionarAposAcao('/receber/baixar.php?id=' . $id);
         } elseif ($acao === 'cancelar_boleto') {
             $pdo->commit();
             cancelarBoletoInter($pdo, $t, input('motivo'));
+            registrarAtividade('boletos', 'cancelamento_boleto', 'Boleto cancelado no banco (' . (input('motivo') ?: 'sem motivo') . '): ' . $rotuloTitulo);
             flash('success', 'Boleto cancelado no Inter.');
             redirecionarAposAcao('/receber/baixar.php?id=' . $id);
         } elseif ($acao === 'devolver_cliente' && in_array($t['status'], ['pendente', 'devolvido'], true)) {
             transferirParaCliente($pdo, $t, dataInput('data') ?? date('Y-m-d'), decimalInput('valor'));
+            registrarAtividade('contas_receber', 'devolucao', 'Devolvido para o cliente (vira repasse de ' . formatMoney(decimalInput('valor')) . '): ' . $rotuloTitulo);
             flash('success', 'Devolvido para ' . $t['cliente_nome'] . ': saiu do contas a receber e virou um repasse em aberto dele.');
         } elseif ($acao === 'desfazer_cliente' && $t['status'] === 'transferido') {
             desfazerTransferencia($pdo, $t);
+            registrarAtividade('contas_receber', 'estorno', 'Desfeita a devolução para o cliente: ' . $rotuloTitulo);
             flash('success', 'Desfeito: o título voltou para o contas a receber e o repasse saiu.');
         } elseif ($acao === 'reabrir' && $t['status'] === 'cancelado') {
             $pdo->prepare("UPDATE contas_receber SET status = 'pendente' WHERE id = ?")->execute([$id]);
+            registrarAtividade('contas_receber', 'reabertura', 'Lançamento reaberto: ' . $rotuloTitulo);
             flash('success', 'Lançamento reaberto.');
         } elseif ($acao === 'alterar' && $podeMexer) {
             $venc = dataInput('data_vencimento') ?? throw new InvalidArgumentException('Vencimento inválido.');
@@ -97,6 +115,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'UPDATE contas_receber SET tipo = ?, emitente_id = ?, valor = ?, data_vencimento = ?, conta_destino_id = ?, banco_titulo = ?, numero_titulo = ?, descricao = ?, observacao = ? WHERE id = ?'
             )->execute([$tipo, $pagadorId, $valor, $venc, idOuNull($_POST['conta_destino_id'] ?? null), input('banco_titulo') ?: null,
                 input('numero_titulo') ?: null, input('descricao') ?: null, input('observacao') ?: null, $id]);
+            registrarAtividade('contas_receber', 'edicao', 'Alterado o ' . $rotuloTitulo . ': ' . descreverAlteracoes(
+                ['tipo' => tipoTituloLabel($t['tipo']), 'pagador' => $t['emitente_nome'], 'valor' => formatMoney($t['valor']), 'vencimento' => formatDate($t['data_vencimento']), 'numero' => $t['numero_titulo'], 'descricao' => $t['descricao'], 'conta' => $t['conta_destino_id']],
+                ['tipo' => tipoTituloLabel($tipo), 'pagador' => $pagadorId == $t['emitente_id'] ? $t['emitente_nome'] : input('pagador_nome'), 'valor' => formatMoney($valor), 'vencimento' => formatDate($venc), 'numero' => input('numero_titulo') ?: null, 'descricao' => input('descricao') ?: null, 'conta' => idOuNull($_POST['conta_destino_id'] ?? null)],
+                ['tipo' => 'Tipo', 'pagador' => 'Pagador', 'valor' => 'Valor', 'vencimento' => 'Vencimento', 'numero' => 'Número', 'descricao' => 'Descrição', 'conta' => 'Conta de destino']));
             $mudouCalculo = $t['operacao_id'] && !$ehResidual && ((float) $valor !== (float) $t['valor'] || $venc !== $t['data_vencimento']);
             if ($mudouCalculo) {
                 recalcularTituloOperacao($pdo, $id);
@@ -112,6 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $pdo->prepare('DELETE FROM contas_receber WHERE id = ?')->execute([$id]);
+            registrarAtividade('contas_receber', 'exclusao', 'Excluído o ' . $rotuloTitulo . ($t['operacao_id'] ? ' da operação #' . $t['operacao_id'] : ''));
             if ($t['operacao_id'] && !$ehResidual) {
                 recalcularTotaisOperacao($pdo, (int) $t['operacao_id']);
             }
@@ -220,6 +243,7 @@ require __DIR__ . '/../../includes/layout_header.php';
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 <?php if ($t['boleto_linha_digitavel']): ?><a href="/receber/boleto_pdf.php?id=<?= (int) $t['id'] ?>" target="_blank" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-pdf"></i> PDF do boleto</a><?php endif; ?>
                 <form method="post" class="d-inline"><input type="hidden" name="acao" value="consultar_boleto"><button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat"></i> Consultar no Inter</button></form>
+                <?php if (usuarioEhAdmin()): ?><a href="/contas/auditoria.php?id=<?= (int) $t['boleto_conta_id'] ?>&titulo=<?= (int) $t['id'] ?>&de=" class="btn btn-sm btn-outline-secondary" title="Tudo o que foi trocado com o banco sobre este boleto"><i class="bi bi-journal-text"></i> Auditoria do banco</a><?php endif; ?>
                 <?php if ($t['boleto_situacao'] !== 'RECEBIDO'): ?>
                 <form method="post" class="d-inline" onsubmit="return confirm('Cancelar o boleto no Banco Inter?');"><input type="hidden" name="acao" value="cancelar_boleto"><input type="hidden" name="motivo" value="Cancelado pelo beneficiário"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Cancelar boleto</button></form>
                 <?php endif; ?>

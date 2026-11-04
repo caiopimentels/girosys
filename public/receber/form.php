@@ -45,6 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $ins->execute([$tipo, $pagadorId, $clienteId, $descricao . ($n > 1 ? ' (' . ($i + 1) . "/{$n})" : ''), $categoriaId, $p['numero'] ?: null,
                 $p['valor'], $p['vencimento'], $contaId, input('observacao') ?: null]);
         }
+        registrarAtividade('contas_receber', 'criacao', ($n > 1 ? "{$n} parcelas lançadas" : 'Conta a receber lançada') . ': ' . $descricao . ' · ' . tipoTituloLabel($tipo) . ' · total ' . formatMoney(array_sum(array_column($parcelas, 'valor')))
+            . (input('pagador_nome') ? ' · pagador ' . input('pagador_nome') : '') . (input('cliente_nome') ? ' · cliente ' . input('cliente_nome') : '') . ' · vencimentos ' . implode(', ', array_map(fn ($p) => formatDate($p['vencimento']), $parcelas)));
         $pdo->commit();
         flash('success', ($n > 1 ? "{$n} parcelas lançadas, total " : 'Conta a receber lançada: ') . formatMoney(array_sum(array_column($parcelas, 'valor'))) . '.');
         redirect(isset($_POST['salvar_outra']) ? '/receber/form.php' : '/receber/listar.php');

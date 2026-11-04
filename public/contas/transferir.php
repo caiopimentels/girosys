@@ -26,6 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $saidaId = lancarMovimentacao($pdo, $origem, $data, 'saida', $valor, 'Transferência para ' . $nomes[$destino] . ($obs ? ' · ' . $obs : ''), 'transferencia');
         $pdo->prepare('UPDATE movimentacoes SET origem_id = id WHERE id = ?')->execute([$saidaId]);
         lancarMovimentacao($pdo, $destino, $data, 'entrada', $valor, 'Transferência de ' . $nomes[$origem] . ($obs ? ' · ' . $obs : ''), 'transferencia', $saidaId);
+        registrarAtividade('contas_bancarias', 'transferencia', 'Transferência de ' . formatMoney($valor) . ' do ' . $nomes[$origem] . ' para o ' . $nomes[$destino] . ' em ' . formatDate($data) . ($obs ? ' · ' . $obs : ''));
         $pdo->commit();
         flash('success', 'Transferência de ' . formatMoney($valor) . ' registrada.');
         redirect('/contas/listar.php');

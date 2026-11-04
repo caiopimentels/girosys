@@ -39,6 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 pagarConta($pdo, ['id' => $id, 'descricao' => $descricao], $vencimento, $v, $contaId);
             }
         }
+        registrarAtividade('contas_pagar', 'criacao', ($n > 1 ? "{$n} lançamentos ({$repeticao})" : 'Despesa lançada') . ': ' . $descricao . ' · ' . ($n > 1 ? $n . 'x · total ' . formatMoney(array_sum($valores)) : formatMoney($valor)) . ' · 1º vencimento ' . formatDate($vencimento)
+            . (input('pessoa_nome') ? ' · ' . input('pessoa_nome') : '') . ($jaPaga ? ' · já paga' : ''));
         $pdo->commit();
         flash('success', $n > 1 ? "{$n} lançamentos criados." : 'Despesa lançada.');
         redirect(isset($_POST['salvar_outra']) ? '/pagar/form.php' : '/pagar/listar.php');

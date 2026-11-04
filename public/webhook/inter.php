@@ -8,6 +8,12 @@ header('Content-Type: application/json; charset=utf-8');
 $pdo = getDB();
 $conta = contaBancaria($pdo, (int) ($_GET['conta'] ?? 0));
 if (!$conta || !contaTemInter($conta) || empty($conta['webhook_segredo']) || !hash_equals($conta['webhook_segredo'], (string) ($_GET['s'] ?? ''))) {
+    // Recusado: fica registrado na aba Webhook da conta (se a conta existe),
+    // com o IP, para dar para ver quem está batendo no endereço.
+    if ($conta && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $pdo->prepare('INSERT INTO webhook_eventos (conta_id, payload, resultado, ip, aceito) VALUES (?, ?, ?, ?, 0)')
+            ->execute([$conta['id'], mb_substr((string) file_get_contents('php://input'), 0, 20000), 'Recusado: segredo do endereço não confere', $_SERVER['REMOTE_ADDR'] ?? null]);
+    }
     http_response_code(403);
     echo json_encode(['ok' => false]);
     exit;

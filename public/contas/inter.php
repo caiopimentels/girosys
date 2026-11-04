@@ -1,8 +1,8 @@
 <?php
-// Integração da conta com o Banco Inter: credenciais, certificado, teste de
-// conexão, registro do webhook e os últimos avisos recebidos.
+// Aba "API do banco" da conta: integração com o Banco Inter (credenciais,
+// certificado e teste de conexão). O webhook fica na aba própria.
 require_once __DIR__ . '/../../includes/bootstrap.php';
-exigirLogin();
+exigirAdmin();
 
 $pdo = getDB();
 $id = (int) ($_GET['id'] ?? 0);
@@ -18,17 +18,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($acao === 'salvar') {
             $ativa = isset($_POST['ativa']);
             $segredo = input('client_secret');
+            $antes = ['integracao' => $conta['integracao'], 'inter_ambiente' => $conta['inter_ambiente'], 'inter_client_id' => $conta['inter_client_id'], 'inter_conta_corrente' => $conta['inter_conta_corrente']];
             $pdo->prepare('UPDATE contas_bancarias SET integracao = ?, inter_ambiente = ?, inter_client_id = ?, inter_conta_corrente = ?, inter_token = NULL' . ($segredo !== '' ? ', inter_client_secret = ?' : '') . ' WHERE id = ?')
                 ->execute(array_merge([$ativa ? 'inter' : 'nenhuma', input('ambiente') === 'sandbox' ? 'sandbox' : 'producao', input('client_id') ?: null, input('conta_corrente') ?: null],
                     $segredo !== '' ? [criptografar($segredo)] : [], [$id]));
             salvarCertificadoInter($pdo, $id, $_FILES['certificado'] ?? [], $_FILES['chave'] ?? []);
+            $depois = ['integracao' => $ativa ? 'inter' : 'nenhuma', 'inter_ambiente' => input('ambiente') === 'sandbox' ? 'sandbox' : 'producao', 'inter_client_id' => input('client_id'), 'inter_conta_corrente' => input('conta_corrente')];
+            $enviados = array_filter(['client secret' => $segredo !== '', 'certificado' => ($_FILES['certificado']['error'] ?? 4) === UPLOAD_ERR_OK, 'chave' => ($_FILES['chave']['error'] ?? 4) === UPLOAD_ERR_OK]);
+            registrarAtividade('contas_bancarias', 'integracao', 'API do Inter da conta ' . $conta['nome'] . ': ' . descreverAlteracoes($antes, $depois, ['integracao' => 'Integração', 'inter_ambiente' => 'Ambiente', 'inter_client_id' => 'Client ID', 'inter_conta_corrente' => 'Conta corrente'])
+                . ($enviados ? ' · novo(s): ' . implode(', ', array_keys($enviados)) : ''));
             flash('success', 'Integração salva.' . (($falta = pendenciasInter(contaBancaria($pdo, $id))) ? ' Ainda falta: ' . implode(', ', $falta) . '.' : ' Agora teste a conexão.'));
         } elseif ($acao === 'testar') {
             interToken($pdo, $conta, true);
             flash('success', 'Conexão com o Banco Inter funcionando (token obtido com o certificado).');
-        } elseif ($acao === 'webhook') {
-            $url = registrarWebhookInter($pdo, $conta);
-            flash('success', 'Webhook registrado no Inter: ' . $url);
         }
     } catch (Throwable $e) {
         flash('danger', $e->getMessage());
@@ -37,17 +39,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $falta = pendenciasInter($conta);
-$eventos = $pdo->prepare('SELECT * FROM webhook_eventos WHERE conta_id = ? ORDER BY id DESC LIMIT 20');
-$eventos->execute([$id]);
-$eventos = $eventos->fetchAll();
-$urlWebhook = contaTemInter($conta) ? urlWebhookInter($pdo, $conta) : '';
 
-$pageTitle = 'Integração Banco Inter · ' . $conta['nome'];
-$pageBreadcrumb = 'Contas bancárias';
-$activeMenu = 'contas';
-$pageAction = '<a href="/contas/listar.php" class="btn btn-outline-secondary">Voltar</a>'
+$pageTitle = $conta['nome'];
+$pageBreadcrumb = 'Administração · Contas bancárias · API do banco';
+$activeMenu = 'configuracoes';
+$pageAction = '<a href="/configuracoes/contas.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Contas bancárias</a>'
     . '<button type="submit" form="form-inter" class="btn btn-brand"><i class="bi bi-check-lg"></i> Salvar</button>';
 require __DIR__ . '/../../includes/layout_header.php';
+$abaAtiva = 'contas';
+require __DIR__ . '/../../includes/abas_configuracoes.php';
+$contaAbaId = $id;
+$contaAba = 'api';
+require __DIR__ . '/../../includes/abas_conta_bancaria.php';
 ?>
 
 <div style="max-width: 900px;">
@@ -58,7 +61,7 @@ require __DIR__ . '/../../includes/layout_header.php';
             Falta para emitir boleto: <strong><?= e(implode(', ', $falta)) ?></strong>.
         <?php else: ?>
             <i class="bi bi-check-circle"></i> Pronta para emitir boletos (<?= $conta['inter_ambiente'] === 'sandbox' ? 'sandbox — teste' : 'produção' ?>).
-            <?= $conta['webhook_registrado_em'] ? 'Webhook registrado em ' . formatDateTime($conta['webhook_registrado_em']) . '.' : 'Falta registrar o webhook para a baixa automática.' ?>
+            <?= $conta['webhook_registrado_em'] ? 'Webhook registrado em ' . formatDateTime($conta['webhook_registrado_em']) . '.' : 'Falta <a href="/contas/webhook.php?id=' . (int) $id . '">registrar o webhook</a> para a baixa automática.' ?>
         <?php endif; ?>
     </div>
 
@@ -90,26 +93,12 @@ require __DIR__ . '/../../includes/layout_header.php';
 
     <?php if (contaTemInter($conta) && !$falta): ?>
     <div class="secao">
-        <div class="secao-titulo"><i class="bi bi-plug"></i> Conexão e baixa automática</div>
-        <div class="d-flex flex-wrap gap-2 mb-2">
-            <form method="post"><input type="hidden" name="acao" value="testar"><button class="btn btn-outline-secondary"><i class="bi bi-plug"></i> Testar conexão</button></form>
-            <form method="post"><input type="hidden" name="acao" value="webhook"><button class="btn btn-outline-secondary"><i class="bi bi-broadcast"></i> <?= $conta['webhook_registrado_em'] ? 'Registrar webhook de novo' : 'Registrar webhook' ?></button></form>
-        </div>
-        <div class="small text-muted">Endereço que o Inter vai chamar quando um boleto for pago: <code><?= e($urlWebhook) ?></code></div>
-        <div class="small text-muted mt-1">Se algum aviso não chegar, a rotina <code>scripts/conferir_boletos.php</code> (cron, a cada hora) confere os boletos em aberto e dá a baixa.</div>
-    </div>
-    <div class="secao">
-        <div class="secao-titulo"><i class="bi bi-list-ul"></i> Últimos avisos do Inter</div>
-        <div class="card"><table class="table table-sm mb-0">
-            <thead><tr><th>Recebido em</th><th>Cobrança</th><th>Situação</th><th>Resultado</th></tr></thead>
-            <tbody>
-            <?php if (!$eventos): ?><tr><td colspan="4" class="text-center text-muted py-3">Nenhum aviso recebido ainda.</td></tr><?php endif; ?>
-            <?php foreach ($eventos as $ev): ?>
-                <tr><td class="text-num"><?= formatDateTime($ev['recebido_em']) ?></td><td class="small"><?= e($ev['codigo'] ?? '-') ?></td><td><?= e(rotuloSituacaoBoleto($ev['situacao'])) ?></td>
-                    <td class="small <?= $ev['processado'] ? 'valor-positivo' : 'text-muted' ?>"><?= e($ev['resultado'] ?? '-') ?></td></tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table></div>
+        <div class="secao-titulo"><i class="bi bi-plug"></i> Conexão</div>
+        <form method="post" class="d-flex flex-wrap align-items-center gap-2">
+            <input type="hidden" name="acao" value="testar">
+            <button class="btn btn-outline-secondary"><i class="bi bi-plug"></i> Testar conexão</button>
+            <span class="small text-muted">Pede um token ao Inter com o certificado e as credenciais. Tudo o que é trocado com o banco fica na aba <a href="/contas/auditoria.php?id=<?= (int) $id ?>">Auditoria do banco</a>.</span>
+        </form>
     </div>
     <?php endif; ?>
 </div>

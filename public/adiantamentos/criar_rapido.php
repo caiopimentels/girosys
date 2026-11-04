@@ -17,6 +17,7 @@ if ($clienteNome === '' || !$data || $valor <= 0 || (!$contaId && !$semConta)) {
 $pdo->beginTransaction();
 $clienteId = obterOuCriarPessoa($pdo, $clienteNome, input('cliente_documento'), 'cliente');
 $id = registrarAdiantamento($pdo, $clienteId, $data, $valor, $contaId, input('descricao'));
+registrarAtividade('repasses', 'criacao', 'Repasse a ' . formatarNomePessoa($clienteNome) . ' (pela operação): ' . formatMoney($valor) . ' em ' . formatDate($data) . ($semConta ? ' · sem movimentar conta' : ''));
 $pdo->commit();
 
 $conta = $pdo->prepare('SELECT nome FROM contas_bancarias WHERE id = ?');

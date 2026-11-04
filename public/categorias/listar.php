@@ -12,14 +12,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = idOuNull($_POST['id'] ?? null);
         if ($nome !== '') {
             if ($id) {
+                $antes = $pdo->prepare('SELECT nome, tipo FROM categorias WHERE id = ?');
+                $antes->execute([$id]);
+                $antes = $antes->fetch() ?: [];
                 $pdo->prepare('UPDATE categorias SET nome = ?, tipo = ? WHERE id = ?')->execute([$nome, $tipo, $id]);
+                registrarAtividade('categorias', 'edicao', 'Categoria ' . $nome . ': ' . descreverAlteracoes($antes, ['nome' => $nome, 'tipo' => $tipo], ['nome' => 'Nome', 'tipo' => 'Tipo']));
             } else {
                 $pdo->prepare('INSERT INTO categorias (nome, tipo) VALUES (?, ?)')->execute([$nome, $tipo]);
+                registrarAtividade('categorias', 'criacao', 'Categoria criada: ' . $nome . ' (' . $tipo . ')');
             }
             flash('success', 'Categoria salva.');
         }
     } elseif ($acao === 'alternar') {
         $pdo->prepare('UPDATE categorias SET ativo = 1 - ativo WHERE id = ?')->execute([(int) $_POST['id']]);
+        $cat = $pdo->prepare('SELECT nome, ativo FROM categorias WHERE id = ?');
+        $cat->execute([(int) $_POST['id']]);
+        if ($cat = $cat->fetch()) {
+            registrarAtividade('categorias', 'edicao', 'Categoria ' . $cat['nome'] . ($cat['ativo'] ? ' ativada' : ' desativada'));
+        }
     }
     redirect('/categorias/listar.php');
 }
@@ -31,9 +41,13 @@ $categorias = $pdo->query(
 )->fetchAll();
 
 $pageTitle = 'Categorias';
-$pageBreadcrumb = 'Cadastros';
+$pageBreadcrumb = 'Cadastros auxiliares';
 $activeMenu = 'categorias';
 require __DIR__ . '/../../includes/layout_header.php';
+$abaAtiva = 'auxiliares';
+require __DIR__ . '/../../includes/abas_configuracoes.php';
+$abaAuxiliar = 'categorias';
+require __DIR__ . '/../../includes/abas_cadastros_auxiliares.php';
 ?>
 
 <div class="row g-4">

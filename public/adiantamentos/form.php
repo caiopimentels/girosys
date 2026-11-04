@@ -28,6 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $soDescricao) {
     // Já usado: só descrição e pagador (informativos) mudam.
     $pdo->prepare('UPDATE adiantamentos SET descricao = ?, pagador_id = ? WHERE id = ?')
         ->execute([input('descricao') ?: null, obterOuCriarPessoa($pdo, input('pagador_nome'), '', 'pagador'), $id]);
+    registrarAtividade('repasses', 'edicao', 'Repasse #' . $id . ' de ' . $repasse['cliente_nome'] . ' (' . formatMoney($repasse['valor']) . '): ' . descreverAlteracoes(
+        ['descricao' => $repasse['descricao'], 'pagador' => $repasse['pagador_nome']], ['descricao' => input('descricao') ?: null, 'pagador' => input('pagador_nome') ?: null], ['descricao' => 'Descrição', 'pagador' => 'Pagador']));
     flash('success', 'Descrição e pagador do repasse alterados.');
     redirect('/adiantamentos/listar.php');
 }
@@ -83,6 +85,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($contaId) {
             lancarMovimentacao($pdo, $contaId, $data, 'saida', $valor, 'Repasse a ' . formatarNomePessoa($clienteNome) . ($descricao ? ' · ' . $descricao : ''), 'adiantamento', $id);
         }
+        registrarAtividade('repasses', 'edicao', 'Repasse #' . $id . ' alterado: ' . descreverAlteracoes(
+            ['cliente' => $repasse['cliente_nome'], 'data' => formatDate($repasse['data']), 'valor' => formatMoney($repasse['valor']), 'conta' => $repasse['conta_id'] ?: 'sem', 'descricao' => $repasse['descricao'], 'pagador' => $repasse['pagador_nome']],
+            ['cliente' => formatarNomePessoa($clienteNome), 'data' => formatDate($data), 'valor' => formatMoney($valor), 'conta' => $contaId ?: 'sem', 'descricao' => $descricao ?: null, 'pagador' => $pagadorNome ?: null],
+            ['cliente' => 'Cliente', 'data' => 'Data', 'valor' => 'Valor', 'conta' => 'Conta (id)', 'descricao' => 'Descrição', 'pagador' => 'Pagador']));
         $pdo->commit();
         flash('success', 'Repasse alterado.');
         redirect('/adiantamentos/listar.php');
@@ -97,8 +103,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $novoId = registrarAdiantamento($pdo, $clienteId, $p['data'], $p['valor'], $contaId, $p['descricao'] ?: $descricao);
             $marcarPagador->execute([$pagadorId, $novoId]);
         }
-        $pdo->commit();
         $soma = array_sum(array_column($parcelas, 'valor'));
+        registrarAtividade('repasses', 'criacao', (count($parcelas) > 1 ? count($parcelas) . ' repasses' : 'Repasse') . ' a ' . formatarNomePessoa($clienteNome) . ': ' . implode(', ', array_map(fn ($p) => formatMoney($p['valor']) . ' em ' . formatDate($p['data']), $parcelas))
+            . ' · total ' . formatMoney($soma) . ($semConta ? ' · sem movimentar conta' : '') . ($pagadorNome ? ' · pagador ' . $pagadorNome : ''));
+        $pdo->commit();
         flash('success', (count($parcelas) > 1 ? count($parcelas) . ' repasses registrados, total ' : 'Repasse de ') . formatMoney($soma) . '. Quando chegarem os títulos, marque-os na operação de desconto.');
         redirect(isset($_POST['salvar_outro']) ? '/adiantamentos/form.php' : '/adiantamentos/listar.php');
     }
