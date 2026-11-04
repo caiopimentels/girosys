@@ -8,8 +8,8 @@ $activeMenu = $activeMenu ?? '';
 $pageAction = $pageAction ?? '';
 $pageBreadcrumb = $pageBreadcrumb ?? '';
 $nomeSistema = nomeSistema();
-$corPrimaria = COR_PRIMARIA;
-$corSecundaria = COR_SECUNDARIA;
+$corPrimaria = corSistema('primaria');
+$corSecundaria = corSistema('secundaria');
 
 // Aberto dentro do modal de detalhe (?modal=1): só o miolo da página — o
 // título vai para o cabeçalho do modal e não há menu, rodapé nem scripts.
@@ -56,6 +56,17 @@ $menus = [
         ],
     ],
 ];
+
+// Cada item só aparece para quem tem a permissão da tela (ver permissaoDaPagina).
+foreach ($menus as $chaveMenu => $menu) {
+    $menus[$chaveMenu]['itens'] = array_values(array_filter($menu['itens'], function ($item) {
+        $permissao = permissaoDaPagina((string) parse_url($item[1], PHP_URL_PATH));
+        return !$permissao || usuarioTemPermissao($permissao[0]);
+    }));
+    if (!$menus[$chaveMenu]['itens']) {
+        unset($menus[$chaveMenu]);
+    }
+}
 ?>
 <!doctype html>
 <html lang="pt-br" data-bs-theme="<?= usuarioLogado() && usuarioAtualTema() === 'escuro' ? 'dark' : 'light' ?>">
@@ -71,6 +82,7 @@ $menus = [
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
     <link href="<?= e(assetUrl('/assets/css/app.css')) ?>" rel="stylesheet">
     <link href="<?= e(assetUrl('/assets/css/sistema.css')) ?>" rel="stylesheet">
+    <?php if ($iconeAba = urlIconeAba()): ?><link rel="icon" type="image/png" href="<?= e($iconeAba) ?>"><?php endif; ?>
     <style>
     :root {
         --accent: <?= e($corPrimaria) ?>;
@@ -83,7 +95,7 @@ $menus = [
 
 <header class="topnav">
     <div class="topnav-inner">
-        <span class="topnav-logo"><span class="topnav-logo-letra"><?= e(mb_strtoupper(mb_substr($nomeSistema, 0, 1))) ?></span></span>
+        <span class="topnav-logo"><?= htmlLogoSistema('topnav') ?></span>
         <a class="topnav-marca" href="/index.php"><?= e($nomeSistema) ?></a>
 
         <button class="topnav-toggle" type="button" onclick="document.getElementById('menu-principal').classList.toggle('aberto')">
@@ -91,7 +103,7 @@ $menus = [
         </button>
 
         <nav class="topnav-menu" id="menu-principal">
-            <a class="topnav-item <?= $activeMenu === 'dashboard' ? 'ativo' : '' ?>" href="/index.php">Início</a>
+            <?php if (usuarioTemPermissao('ver_dashboard')): ?><a class="topnav-item <?= $activeMenu === 'dashboard' ? 'ativo' : '' ?>" href="/index.php">Início</a><?php endif; ?>
             <?php foreach ($menus as $menu): ?>
                 <?php $grupoAtivo = $activeMenu !== '' && in_array($activeMenu, array_column($menu['itens'], 2), true); ?>
                 <div class="dropdown topnav-grupo">
@@ -109,7 +121,7 @@ $menus = [
         </nav>
 
         <div class="topnav-direita">
-            <a href="/operacoes/form.php" class="btn btn-sm btn-brand d-none d-lg-inline-flex align-items-center gap-1"><i class="bi bi-calculator"></i> Descontar</a>
+            <?php if (usuarioTemPermissao('operacoes')): ?><a href="/operacoes/form.php" class="btn btn-sm btn-brand d-none d-lg-inline-flex align-items-center gap-1"><i class="bi bi-calculator"></i> Descontar</a><?php endif; ?>
 
             <button type="button" class="topnav-icone" title="Trocar para tema <?= usuarioAtualTema() === 'escuro' ? 'claro' : 'escuro' ?>" onclick="alternarTema()">
                 <i class="bi <?= usuarioAtualTema() === 'escuro' ? 'bi-sun' : 'bi-moon-stars' ?>"></i>
@@ -118,6 +130,20 @@ $menus = [
             <span class="topnav-sessao" id="topnav-sessao-timer" title="Tempo até a sessão expirar por inatividade">
                 <i class="bi bi-clock-history"></i> <span id="sessao-timer-valor">--:--</span>
             </span>
+
+            <?php if (usuarioEhAdmin()): ?>
+            <div class="dropdown">
+                <button class="topnav-icone <?= in_array($activeMenu, ['usuarios', 'perfis', 'configuracoes'], true) ? 'ativo' : '' ?>" data-bs-toggle="dropdown" type="button" title="Administração">
+                    <i class="bi bi-gear"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end topnav-dropdown">
+                    <a class="dropdown-item" href="/usuarios/listar.php">Usuários</a>
+                    <a class="dropdown-item" href="/perfis/listar.php">Perfis de acesso</a>
+                    <a class="dropdown-item" href="/configuracoes/form.php">Configurações</a>
+                    <a class="dropdown-item" href="/configuracoes/auditoria.php">Auditoria</a>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <div class="dropdown">
                 <button class="topnav-usuario" data-bs-toggle="dropdown" type="button">

@@ -5,22 +5,8 @@
 require_once __DIR__ . '/../includes/bootstrap_webhook.php';
 
 $pdo = getDB();
-$ids = $pdo->query(
-    "SELECT id FROM contas_receber
-     WHERE boleto_codigo IS NOT NULL AND status IN ('pendente', 'devolvido')
-       AND (boleto_situacao IS NULL OR boleto_situacao NOT IN ('CANCELADO', 'EXPIRADO'))"
-)->fetchAll(PDO::FETCH_COLUMN);
-$pagos = 0;
-foreach ($ids as $id) {
-    try {
-        if (consultarBoletoInter($pdo, (int) $id) === 'RECEBIDO') {
-            $pagos++;
-        }
-    } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
-        fwrite(STDERR, "Título #{$id}: " . $e->getMessage() . "\n");
-    }
+[$conferidos, $pagos, $erros] = conferirBoletosInter($pdo);
+foreach ($erros as $id => $mensagem) {
+    fwrite(STDERR, "Título #{$id}: {$mensagem}\n");
 }
-echo date('Y-m-d H:i') . ' · ' . count($ids) . " boleto(s) conferido(s), {$pagos} pago(s) baixado(s).\n";
+echo date('Y-m-d H:i') . " · {$conferidos} boleto(s) conferido(s), {$pagos} pago(s) baixado(s)" . ($erros ? ', ' . count($erros) . ' com erro' : '') . ".\n";

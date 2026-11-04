@@ -13,20 +13,14 @@ define('DB_USER', 'root');
 define('DB_PASS', '');
 define('DB_CHARSET', 'utf8mb4');
 
-define('APP_NAME', 'Meu Sistema');
-define('COR_PRIMARIA', '#16a34a');
-define('COR_SECUNDARIA', '#15803d');
-
-// Minutos sem usar o sistema até deslogar sozinho.
-define('SESSAO_TIMEOUT_MINUTOS', 60);
-
-// Título recebido até X dias depois do vencimento ainda conta como "em dia"
-// no histórico do emitente (prazo normal de compensação do cheque).
-define('TOLERANCIA_COMPENSACAO_DIAS', 3);
+// Nome usado só se Configurações › Sistema estiver vazio. Nome, logo, cores,
+// tempo de sessão, tolerância de compensação e SMTP ficam no banco
+// (tabela configuracoes, tela Configurações).
+define('APP_NAME', 'GiroSys');
 
 // Endereço público do sistema (com https), usado no webhook do Banco Inter.
 // Vazio = usa o endereço pelo qual o sistema foi acessado.
-define('URL_SISTEMA', '');
+define('URL_SISTEMA', getenv('URL_SISTEMA') ?: '');
 // Só para testes locais: aponta a API do Inter para um simulador.
 define('INTER_URL_BASE', getenv('INTER_URL_BASE') ?: '');
 

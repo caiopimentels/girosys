@@ -2,6 +2,12 @@
 
 set_exception_handler(function (Throwable $e) {
     error_log('[Erro não tratado] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine() . "\n" . $e->getTraceAsString());
+    if (function_exists('notificarErroSistema')) {
+        notificarErroSistema(
+            $e->getMessage() . "\n" . $e->getFile() . ':' . $e->getLine() . "\n\n" . $e->getTraceAsString(),
+            ($_SERVER['REQUEST_METHOD'] ?? '') . ' ' . ($_SERVER['REQUEST_URI'] ?? '') . (function_exists('usuarioAtualNome') && usuarioAtualNome() !== '' ? ' · usuário ' . usuarioAtualNome() : '')
+        );
+    }
 
     if (!headers_sent()) {
         http_response_code(500);
@@ -41,6 +47,9 @@ if ($https) {
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/cripto.php';
+require_once __DIR__ . '/rate_limit.php';
+require_once __DIR__ . '/auditoria.php';
+require_once __DIR__ . '/smtp_mailer.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/financeiro.php';
 require_once __DIR__ . '/desconto.php';

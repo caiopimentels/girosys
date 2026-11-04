@@ -319,7 +319,7 @@ function partesPagamentoInput(): array
  */
 function historicoEmitente(PDO $pdo, int $pessoaId): array
 {
-    $tolerancia = (int) TOLERANCIA_COMPENSACAO_DIAS;
+    $tolerancia = toleranciaCompensacaoDias();
     $stmt = $pdo->prepare(
         "SELECT
             COUNT(*) AS total,

@@ -119,9 +119,77 @@ function idOuNull($valor): ?int
     return $id > 0 ? $id : null;
 }
 
+// Linha única de Configurações (id 1), lida uma vez por requisição.
+// $recarregar = depois de salvar a tela de Configurações.
+function buscarConfiguracoes(PDO $pdo, bool $recarregar = false): array
+{
+    static $config = null;
+    if ($config === null || $recarregar) {
+        $config = $pdo->query('SELECT * FROM configuracoes WHERE id = 1')->fetch() ?: [];
+    }
+    return $config;
+}
+
+function configuracao(string $campo, $padrao = null)
+{
+    return buscarConfiguracoes(getDB())[$campo] ?? $padrao;
+}
+
 function nomeSistema(): string
 {
-    return APP_NAME;
+    $nome = trim((string) configuracao('nome_sistema', ''));
+    return $nome !== '' ? $nome : (defined('APP_NAME') ? (string) APP_NAME : 'Sistema');
+}
+
+function corSistema(string $qual): string
+{
+    $cor = (string) configuracao($qual === 'secundaria' ? 'cor_secundaria' : 'cor_primaria', '');
+    return preg_match('/^#[0-9a-fA-F]{6}$/', $cor) ? $cor : ($qual === 'secundaria' ? '#15803d' : '#16a34a');
+}
+
+function toleranciaCompensacaoDias(): int
+{
+    return (int) configuracao('tolerancia_compensacao_dias', 3);
+}
+
+// Logo do topo/login: a imagem das Configurações com a posição e o zoom
+// ajustados, ou a primeira letra do nome quando não há logo.
+function htmlLogoSistema(string $prefixo): string
+{
+    $config = buscarConfiguracoes(getDB());
+    if (!empty($config['logo_sistema'])) {
+        $x = ((int) ($config['logo_pos_x'] ?? 50) - 50) * 0.9;
+        $y = ((int) ($config['logo_pos_y'] ?? 50) - 50) * 0.9;
+        $zoom = (float) ($config['logo_zoom'] ?? 1);
+        return '<img src="' . e($config['logo_sistema']) . '" alt="' . e(nomeSistema()) . '" class="' . $prefixo . '-logo-img" style="left: ' . $x . '%; top: ' . $y . '%; transform: scale(' . $zoom . ');">';
+    }
+    return '<span class="' . $prefixo . '-logo-letra">' . e(mb_strtoupper(mb_substr(nomeSistema(), 0, 1))) . '</span>';
+}
+
+// Endereço do ícone da aba (favicon.php): muda junto com a logo e o ajuste
+// de posição/zoom, para o navegador não ficar com o ícone antigo.
+function urlIconeAba(): ?string
+{
+    $config = buscarConfiguracoes(getDB());
+    if (empty($config['logo_sistema'])) {
+        return null;
+    }
+    return '/favicon.php?v=' . substr(md5($config['logo_sistema'] . '|' . $config['logo_pos_x'] . '|' . $config['logo_pos_y'] . '|' . $config['logo_zoom']), 0, 10);
+}
+
+/**
+ * Garante que a pasta de upload existe e o servidor consegue gravar nela.
+ * Retorna null se está tudo certo, ou a mensagem com o comando para liberar.
+ */
+function problemaPastaUpload(string $pasta): ?string
+{
+    if (!is_dir($pasta) && !@mkdir($pasta, 0775, true)) {
+        return 'A pasta ' . $pasta . ' não existe e não foi possível criá-la. No servidor: mkdir -p ' . $pasta . ' && chmod 775 ' . $pasta;
+    }
+    if (!is_writable($pasta)) {
+        return 'Sem permissão de gravação em ' . $pasta . '. No servidor: chmod 775 ' . $pasta . ' (dono = usuário do PHP/Apache).';
+    }
+    return null;
 }
 
 /** Nome com só a primeira letra de cada palavra maiúscula (de/da/do minúsculos). */

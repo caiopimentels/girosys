@@ -2,7 +2,11 @@
 
 function tentarLogin(PDO $pdo, string $email, string $senha): bool
 {
-    $stmt = $pdo->prepare('SELECT * FROM usuarios WHERE email = ? AND ativo = 1');
+    $stmt = $pdo->prepare(
+        'SELECT u.*, p.nome AS perfil_nome, p.administrador
+         FROM usuarios u JOIN perfis p ON p.id = u.perfil_id
+         WHERE u.email = ? AND u.ativo = 1'
+    );
     $stmt->execute([$email]);
     $usuario = $stmt->fetch();
 
@@ -10,21 +14,42 @@ function tentarLogin(PDO $pdo, string $email, string $senha): bool
         return false;
     }
 
-    iniciarSessaoUsuario($usuario);
+    iniciarSessaoUsuario($pdo, $usuario);
+    registrarAtividade('login', 'login', 'Login realizado');
     return true;
 }
 
-function iniciarSessaoUsuario(array $usuario): void
+function iniciarSessaoUsuario(PDO $pdo, array $usuario): void
 {
+    $stmt = $pdo->prepare(
+        'SELECT perm.chave FROM perfil_permissoes pp JOIN permissoes perm ON perm.id = pp.permissao_id WHERE pp.perfil_id = ?'
+    );
+    $stmt->execute([$usuario['perfil_id']]);
+    $permissoes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    // Um token novo a cada login "derruba" qualquer sessão anterior dessa
+    // conta: a sessão antiga só descobre isso na próxima ação dela.
+    $tokenSessao = bin2hex(random_bytes(32));
+    $pdo->prepare('UPDATE usuarios SET token_sessao = ? WHERE id = ?')->execute([$tokenSessao, $usuario['id']]);
+
     session_regenerate_id(true);
     $_SESSION['user_id'] = (int) $usuario['id'];
     $_SESSION['user_nome'] = $usuario['nome'];
+    $_SESSION['user_perfil_id'] = (int) $usuario['perfil_id'];
+    $_SESSION['user_perfil_nome'] = $usuario['perfil_nome'] ?? '';
+    $_SESSION['user_administrador'] = (bool) ($usuario['administrador'] ?? false);
+    $_SESSION['user_permissoes'] = $permissoes;
     $_SESSION['user_tema'] = $usuario['tema'] ?? 'claro';
+    $_SESSION['token_sessao'] = $tokenSessao;
     $_SESSION['ultima_atividade'] = time();
 }
 
-function fazerLogout(): void
+function fazerLogout(string $descricao = 'Logout realizado'): void
 {
+    if (usuarioLogado()) {
+        registrarAtividadeUsuario(usuarioAtualId(), usuarioAtualNome(), 'login', 'logout', $descricao);
+    }
+
     $_SESSION = [];
     session_destroy();
 }
@@ -49,14 +74,85 @@ function usuarioAtualTema(): string
     return ($_SESSION['user_tema'] ?? 'claro') === 'escuro' ? 'escuro' : 'claro';
 }
 
-function sessaoTimeoutSegundos(): int
+function usuarioEhAdmin(): bool
 {
-    return max(1, (int) SESSAO_TIMEOUT_MINUTOS) * 60;
+    return (bool) ($_SESSION['user_administrador'] ?? false);
 }
 
+function usuarioTemPermissao(string $chave): bool
+{
+    return usuarioEhAdmin() || in_array($chave, $_SESSION['user_permissoes'] ?? [], true);
+}
+
+// Permissão que cada pasta de telas exige (a página só abre com ela).
+// Telas fora da lista (Início, Minha conta...) só pedem login.
+function permissaoDaPagina(string $script): ?array
+{
+    $mapa = [
+        '/operacoes/' => ['operacoes', 'Você não tem acesso às operações de desconto.'],
+        '/adiantamentos/criar_rapido.php' => ['operacoes', 'Você não tem acesso às operações de desconto.'],
+        '/adiantamentos/' => ['repasses', 'Você não tem acesso aos repasses.'],
+        '/receber/' => ['receber', 'Você não tem acesso ao contas a receber.'],
+        '/pagar/' => ['pagar', 'Você não tem acesso ao contas a pagar.'],
+        '/financeiro/' => ['movimentacao', 'Você não tem acesso aos recebimentos e pagamentos.'],
+        '/cartoes/' => ['cartoes', 'Você não tem acesso aos cartões de crédito.'],
+        '/contas/' => ['contas', 'Você não tem acesso às contas bancárias.'],
+        '/pessoas/' => ['pessoas', 'Você não tem acesso aos cadastros de pessoas.'],
+        '/categorias/' => ['cadastros_auxiliares', 'Você não tem acesso aos cadastros auxiliares.'],
+        '/configuracoes/recebimento.php' => ['cadastros_auxiliares', 'Você não tem acesso aos cadastros auxiliares.'],
+    ];
+    foreach ($mapa as $prefixo => $permissao) {
+        if (str_starts_with($script, $prefixo)) {
+            return $permissao;
+        }
+    }
+    return null;
+}
+
+function sessaoTimeoutSegundos(): int
+{
+    return max(1, (int) configuracao('sessao_timeout_minutos', 60)) * 60;
+}
+
+// Quantos segundos faltam para a sessão atual expirar por inatividade —
+// usado pelo timer regressivo exibido no topo do sistema.
 function sessaoSegundosRestantes(): int
 {
     return max(0, sessaoTimeoutSegundos() - (time() - ($_SESSION['ultima_atividade'] ?? time())));
+}
+
+function sairPorSessao(string $descricao, string $mensagem): void
+{
+    fazerLogout($descricao);
+    session_start();
+    if (ehRequisicaoAjax()) {
+        http_response_code(401);
+        responderJson(['sucesso' => false, 'mensagem' => $mensagem]);
+    }
+    flash('danger', $mensagem);
+    redirect('/login.php');
+}
+
+function verificarTimeoutSessao(): void
+{
+    if ((time() - ($_SESSION['ultima_atividade'] ?? time())) > sessaoTimeoutSegundos()) {
+        sairPorSessao('Sessão expirada por inatividade', 'Sua sessão expirou por inatividade. Entre novamente.');
+    }
+    $_SESSION['ultima_atividade'] = time();
+}
+
+// Não permite duas sessões abertas ao mesmo tempo para a mesma conta: quando
+// alguém loga de novo (outro aparelho/navegador), o token muda no banco e
+// esta sessão passa a não bater mais com ele. Usuário desativado também sai.
+function verificarSessaoUnica(): void
+{
+    $stmt = getDB()->prepare('SELECT token_sessao FROM usuarios WHERE id = ? AND ativo = 1');
+    $stmt->execute([usuarioAtualId()]);
+    $tokenAtual = $stmt->fetchColumn();
+
+    if ($tokenAtual === false || $tokenAtual !== ($_SESSION['token_sessao'] ?? null)) {
+        sairPorSessao('Sessão encerrada por login em outro dispositivo', 'Sua conta foi acessada em outro dispositivo. Entre novamente.');
+    }
 }
 
 function exigirLogin(): void
@@ -68,30 +164,61 @@ function exigirLogin(): void
         }
         redirect('/login.php');
     }
-    if ((time() - ($_SESSION['ultima_atividade'] ?? time())) > sessaoTimeoutSegundos()) {
-        fazerLogout();
-        session_start();
-        flash('danger', 'Sua sessão expirou por inatividade. Entre novamente.');
-        redirect('/login.php');
+    verificarSessaoUnica();
+    verificarTimeoutSessao();
+
+    $permissao = permissaoDaPagina((string) parse_url($_SERVER['SCRIPT_NAME'] ?? '', PHP_URL_PATH));
+    if ($permissao && !usuarioTemPermissao($permissao[0])) {
+        negarAcesso($permissao[1]);
     }
-    $_SESSION['ultima_atividade'] = time();
 }
 
-// Bloqueio simples contra chute de senha: 5 erros em 15 minutos.
-function loginBloqueado(PDO $pdo, string $chave): bool
+function negarAcesso(string $mensagem): void
 {
-    $stmt = $pdo->prepare('SELECT COUNT(*) FROM tentativas_login WHERE chave = ? AND criado_em > NOW() - INTERVAL 15 MINUTE');
-    $stmt->execute([$chave]);
-    return (int) $stmt->fetchColumn() >= 5;
+    if (ehRequisicaoAjax()) {
+        http_response_code(403);
+        responderJson(['sucesso' => false, 'mensagem' => $mensagem]);
+    }
+    flash('danger', $mensagem);
+    redirect('/sem_acesso.php');
 }
 
-function registrarFalhaLogin(PDO $pdo, string $chave): void
+function exigirAdmin(): void
 {
-    $pdo->prepare('INSERT INTO tentativas_login (chave) VALUES (?)')->execute([$chave]);
-    $pdo->exec('DELETE FROM tentativas_login WHERE criado_em < NOW() - INTERVAL 1 DAY');
+    exigirLogin();
+    if (!usuarioEhAdmin()) {
+        negarAcesso('Apenas administradores podem acessar esta página.');
+    }
 }
 
-function limparFalhasLogin(PDO $pdo, string $chave): void
+function exigirPermissao(string $chave, string $mensagem): void
 {
-    $pdo->prepare('DELETE FROM tentativas_login WHERE chave = ?')->execute([$chave]);
+    exigirLogin();
+    if (!usuarioTemPermissao($chave)) {
+        negarAcesso($mensagem);
+    }
+}
+
+// Para ações dentro de uma tela (ex.: dar baixa no contas a receber).
+function exigirPermissaoAcao(string $chave, string $mensagem): void
+{
+    if (!usuarioTemPermissao($chave)) {
+        negarAcesso($mensagem);
+    }
+}
+
+function senhaDoUsuarioConfere(PDO $pdo, string $senha): bool
+{
+    $quem = (string) usuarioAtualId();
+    if (limiteDeTentativasExcedido($pdo, 'senha_confirmacao', $quem, 5, 20, 15)) {
+        return false;
+    }
+    $stmt = $pdo->prepare('SELECT senha FROM usuarios WHERE id = ?');
+    $stmt->execute([usuarioAtualId()]);
+    if ($senha !== '' && password_verify($senha, (string) $stmt->fetchColumn())) {
+        limparTentativasAcesso($pdo, 'senha_confirmacao', $quem);
+        return true;
+    }
+    registrarTentativaAcesso($pdo, 'senha_confirmacao', $quem);
+    return false;
 }

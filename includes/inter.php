@@ -93,8 +93,84 @@ function salvarCertificadoInter(PDO $pdo, int $contaId, array $arquivoCrt, array
 }
 
 /**
+ * Título a que as próximas chamadas ao banco se referem (vai para a
+ * auditoria do banco). null = chamada da conta (token, webhook...).
+ */
+function interContextoTitulo(?int $tituloId = null, bool $definir = false): ?int
+{
+    static $atual = null;
+    if ($definir) {
+        $atual = $tituloId;
+    }
+    return $atual;
+}
+
+/** Nome da operação para a auditoria do banco, pelo método e caminho. */
+function interOperacaoChamada(string $metodo, string $caminho): string
+{
+    return match (true) {
+        str_contains($caminho, '/oauth/') => 'token',
+        str_ends_with($caminho, '/webhook') => match ($metodo) { 'PUT' => 'registrar_webhook', 'DELETE' => 'excluir_webhook', default => 'consultar_webhook' },
+        str_contains($caminho, '/webhook/callbacks') => 'reenviar_webhook',
+        str_ends_with($caminho, '/pdf') => 'pdf_boleto',
+        str_ends_with($caminho, '/cancelar') => 'cancelar_boleto',
+        $metodo === 'POST' => 'emitir_boleto',
+        default => 'consultar_boleto',
+    };
+}
+
+function rotulosOperacaoBanco(): array
+{
+    return [
+        'token' => 'Autenticação (token)',
+        'emitir_boleto' => 'Emissão de boleto',
+        'consultar_boleto' => 'Consulta de boleto',
+        'pdf_boleto' => 'PDF do boleto',
+        'cancelar_boleto' => 'Cancelamento de boleto',
+        'registrar_webhook' => 'Registro do webhook',
+        'consultar_webhook' => 'Consulta do webhook',
+        'excluir_webhook' => 'Exclusão do webhook',
+        'reenviar_webhook' => 'Avisos enviados pelo banco',
+    ];
+}
+
+/**
+ * Guarda a chamada na auditoria do banco (banco_chamadas). Segredos saem
+ * mascarados e o PDF não é guardado. Nunca derruba a chamada.
+ */
+function registrarChamadaBanco(array $conta, string $metodo, string $caminho, $corpo, int $status, $resposta, ?string $erro, int $duracaoMs): void
+{
+    try {
+        $operacao = interOperacaoChamada($metodo, $caminho);
+        if (is_array($corpo) && isset($corpo['client_secret'])) {
+            $corpo['client_secret'] = '••••••';
+        }
+        if (is_array($resposta) && isset($resposta['access_token'])) {
+            $resposta['access_token'] = '••••••';
+        }
+        if (is_array($resposta) && isset($resposta['pdf'])) {
+            $resposta['pdf'] = '[PDF em base64, ' . strlen((string) $resposta['pdf']) . ' caracteres — não guardado]';
+        }
+        $texto = fn ($v) => $v === null ? null : mb_substr(is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT), 0, 60000);
+        $sucesso = $erro === null && $status >= 200 && $status < 300;
+        $mensagem = $erro ?? ($sucesso ? null : interMensagemErro($status, $resposta));
+        getDB()->prepare(
+            'INSERT INTO banco_chamadas (conta_bancaria_id, operacao, conta_receber_id, usuario_id, origem, metodo, url, status_http, sucesso, requisicao, resposta, mensagem, duracao_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $conta['id'] ?? null, $operacao, interContextoTitulo(), usuarioAtualId(), usuarioAtualId() ? 'sistema' : 'automatico',
+            $metodo, mb_substr(interUrlBase($conta) . $caminho, 0, 255), $status ?: null, $sucesso ? 1 : 0,
+            $texto($corpo), $texto($resposta), $mensagem !== null ? mb_substr($mensagem, 0, 255) : null, $duracaoMs,
+        ]);
+    } catch (Throwable $e) {
+        error_log('Falha ao registrar chamada ao banco: ' . $e->getMessage());
+    }
+}
+
+/**
  * Chamada HTTP à API com o certificado da conta. Devolve [status, corpo decodificado].
  * $form = true manda application/x-www-form-urlencoded (só o token).
+ * Toda chamada fica na auditoria do banco.
  */
 function interHttp(array $conta, string $metodo, string $caminho, $corpo = null, ?string $token = null, bool $form = false): array
 {
@@ -119,14 +195,20 @@ function interHttp(array $conta, string $metodo, string $caminho, $corpo = null,
         CURLOPT_SSLCERT => $conta['inter_certificado'],
         CURLOPT_SSLKEY => $conta['inter_chave'],
     ]);
+    $inicio = microtime(true);
     $resposta = curl_exec($ch);
+    $duracao = (int) round((microtime(true) - $inicio) * 1000);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $erroCurl = curl_error($ch);
     curl_close($ch);
     if ($resposta === false) {
-        throw new RuntimeException('Sem resposta do Banco Inter: ' . $erroCurl);
+        $erro = 'Sem resposta do Banco Inter: ' . $erroCurl;
+        registrarChamadaBanco($conta, $metodo, $caminho, $corpo, $status, null, $erro, $duracao);
+        throw new RuntimeException($erro);
     }
-    return [$status, json_decode((string) $resposta, true) ?? $resposta];
+    $decodificada = json_decode((string) $resposta, true) ?? $resposta;
+    registrarChamadaBanco($conta, $metodo, $caminho, $corpo, $status, $decodificada, null, $duracao);
+    return [$status, $decodificada];
 }
 
 /** Mensagem legível de um erro da API ("title", "detail", "violacoes"...). */
@@ -248,6 +330,7 @@ function emitirBoletoInter(PDO $pdo, array $titulo, array $conta): void
     if (!$pagador) {
         throw new InvalidArgumentException('Informe o pagador do título antes de emitir o boleto.');
     }
+    interContextoTitulo((int) $titulo['id'], true);
     $resposta = interApi($pdo, $conta, 'POST', '/cobranca/v3/cobrancas', corpoBoletoInter($pdo, $titulo, $pagador));
     $codigo = $resposta['codigoSolicitacao'] ?? null;
     if (!$codigo) {
@@ -277,6 +360,7 @@ function consultarBoletoInter(PDO $pdo, int $tituloId): string
         throw new InvalidArgumentException('Este título não tem boleto do Inter.');
     }
     $conta = contaBancaria($pdo, (int) $t['boleto_conta_id']);
+    interContextoTitulo($tituloId, true);
     $r = interApi($pdo, $conta, 'GET', '/cobranca/v3/cobrancas/' . rawurlencode($t['boleto_codigo']));
     $cob = $r['cobranca'] ?? [];
     $situacao = (string) ($cob['situacao'] ?? 'DESCONHECIDA');
@@ -291,6 +375,7 @@ function consultarBoletoInter(PDO $pdo, int $tituloId): string
         $pdo->beginTransaction();
         baixarReceber($pdo, $t, $data, $valor, (int) $conta['id']);
         $pdo->commit();
+        registrarAtividade('boletos', 'baixa_automatica', 'Boleto pago no ' . $conta['nome'] . ': título #' . $tituloId . ' (' . ($t['emitente_nome'] ?? '-') . ') recebido ' . formatMoney($valor) . ' em ' . formatDate($data));
     }
     return $situacao;
 }
@@ -299,6 +384,7 @@ function consultarBoletoInter(PDO $pdo, int $tituloId): string
 function pdfBoletoInter(PDO $pdo, array $titulo): string
 {
     $conta = contaBancaria($pdo, (int) $titulo['boleto_conta_id']);
+    interContextoTitulo((int) $titulo['id'], true);
     $r = interApi($pdo, $conta, 'GET', '/cobranca/v3/cobrancas/' . rawurlencode($titulo['boleto_codigo']) . '/pdf');
     $pdf = base64_decode((string) ($r['pdf'] ?? ''), true);
     if (!$pdf) {
@@ -310,6 +396,7 @@ function pdfBoletoInter(PDO $pdo, array $titulo): string
 function cancelarBoletoInter(PDO $pdo, array $titulo, string $motivo): void
 {
     $conta = contaBancaria($pdo, (int) $titulo['boleto_conta_id']);
+    interContextoTitulo((int) $titulo['id'], true);
     interApi($pdo, $conta, 'POST', '/cobranca/v3/cobrancas/' . rawurlencode($titulo['boleto_codigo']) . '/cancelar', ['motivoCancelamento' => mb_substr($motivo ?: 'Cancelado pelo beneficiário', 0, 50)]);
     $pdo->prepare("UPDATE contas_receber SET boleto_situacao = 'CANCELADO' WHERE id = ?")->execute([$titulo['id']]);
 }
@@ -344,9 +431,32 @@ function registrarWebhookInter(PDO $pdo, array $conta): string
     if (!str_starts_with($url, 'https://')) {
         throw new InvalidArgumentException('O Inter só aceita webhook em endereço https:// — acesse o sistema pelo endereço com https (ou defina URL_SISTEMA no config.php).');
     }
+    interContextoTitulo(null, true);
     interApi($pdo, $conta, 'PUT', '/cobranca/v3/cobrancas/webhook', ['webhookUrl' => $url]);
     $pdo->prepare('UPDATE contas_bancarias SET webhook_registrado_em = NOW() WHERE id = ?')->execute([$conta['id']]);
     return $url;
+}
+
+/** Webhook cadastrado hoje no banco (endereço e data), ou null se não houver. */
+function consultarWebhookInter(PDO $pdo, array $conta): ?array
+{
+    interContextoTitulo(null, true);
+    try {
+        $r = interApi($pdo, $conta, 'GET', '/cobranca/v3/cobrancas/webhook');
+    } catch (RuntimeException $e) {
+        if (str_contains($e->getMessage(), '(404)') || str_contains($e->getMessage(), ' 404')) {
+            return null;
+        }
+        throw $e;
+    }
+    return !empty($r['webhookUrl']) ? $r : null;
+}
+
+function excluirWebhookInter(PDO $pdo, array $conta): void
+{
+    interContextoTitulo(null, true);
+    interApi($pdo, $conta, 'DELETE', '/cobranca/v3/cobrancas/webhook');
+    $pdo->prepare('UPDATE contas_bancarias SET webhook_registrado_em = NULL WHERE id = ?')->execute([$conta['id']]);
 }
 
 /**
@@ -359,14 +469,14 @@ function processarWebhookInter(PDO $pdo, int $contaId, array $avisos): int
     $atualizados = 0;
     foreach ($avisos as $aviso) {
         $codigo = (string) ($aviso['codigoSolicitacao'] ?? '');
-        $pdo->prepare('INSERT INTO webhook_eventos (conta_id, codigo, situacao, payload) VALUES (?, ?, ?, ?)')
-            ->execute([$contaId, $codigo ?: null, $aviso['situacao'] ?? null, json_encode($aviso, JSON_UNESCAPED_UNICODE)]);
+        $pdo->prepare('INSERT INTO webhook_eventos (conta_id, codigo, situacao, payload, ip) VALUES (?, ?, ?, ?, ?)')
+            ->execute([$contaId, $codigo ?: null, $aviso['situacao'] ?? null, json_encode($aviso, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), $_SERVER['REMOTE_ADDR'] ?? null]);
         $eventoId = (int) $pdo->lastInsertId();
         $stmt = $pdo->prepare('SELECT id FROM contas_receber WHERE boleto_codigo = ? AND boleto_conta_id = ?');
         $stmt->execute([$codigo, $contaId]);
         $tituloId = $stmt->fetchColumn();
         try {
-            $resultado = $tituloId ? 'situação ' . consultarBoletoInter($pdo, (int) $tituloId) : 'cobrança não encontrada no sistema';
+            $resultado = $tituloId ? 'Título #' . $tituloId . ': ' . rotuloSituacaoBoleto(consultarBoletoInter($pdo, (int) $tituloId)) : 'cobrança não encontrada no sistema';
             $pdo->prepare('UPDATE webhook_eventos SET processado = ?, resultado = ? WHERE id = ?')->execute([$tituloId ? 1 : 0, $resultado, $eventoId]);
             $atualizados += $tituloId ? 1 : 0;
         } catch (Throwable $e) {
@@ -377,4 +487,61 @@ function processarWebhookInter(PDO $pdo, int $contaId, array $avisos): int
         }
     }
     return $atualizados;
+}
+
+/** Processa de novo um aviso já recebido (ex.: deu erro na primeira vez). */
+function reprocessarEventoWebhook(PDO $pdo, int $eventoId): string
+{
+    $stmt = $pdo->prepare('SELECT * FROM webhook_eventos WHERE id = ? AND aceito = 1');
+    $stmt->execute([$eventoId]);
+    $ev = $stmt->fetch();
+    if (!$ev || !$ev['codigo']) {
+        throw new InvalidArgumentException('Aviso sem cobrança para processar.');
+    }
+    $stmt = $pdo->prepare('SELECT id FROM contas_receber WHERE boleto_codigo = ? AND boleto_conta_id = ?');
+    $stmt->execute([$ev['codigo'], $ev['conta_id']]);
+    $tituloId = (int) $stmt->fetchColumn();
+    if (!$tituloId) {
+        throw new InvalidArgumentException('A cobrança ' . $ev['codigo'] . ' não está em nenhum título do sistema.');
+    }
+    $resultado = 'Título #' . $tituloId . ': ' . rotuloSituacaoBoleto(consultarBoletoInter($pdo, $tituloId)) . ' (reprocessado)';
+    $pdo->prepare('UPDATE webhook_eventos SET processado = 1, resultado = ? WHERE id = ?')->execute([$resultado, $eventoId]);
+    return $resultado;
+}
+
+/** Títulos com boleto em aberto (de uma conta, ou de todas). */
+function boletosEmAberto(PDO $pdo, ?int $contaId = null): array
+{
+    $stmt = $pdo->prepare(
+        "SELECT r.*, e.nome AS pagador_nome FROM contas_receber r LEFT JOIN pessoas e ON e.id = r.emitente_id
+         WHERE r.boleto_codigo IS NOT NULL AND r.status IN ('pendente', 'devolvido')
+           AND (r.boleto_situacao IS NULL OR r.boleto_situacao NOT IN ('CANCELADO', 'EXPIRADO'))" . ($contaId ? ' AND r.boleto_conta_id = ?' : '') . '
+         ORDER BY r.data_vencimento, r.id'
+    );
+    $stmt->execute($contaId ? [$contaId] : []);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Consulta no banco os boletos em aberto e dá baixa nos pagos (cron e a aba
+ * Conferir boletos). Devolve [conferidos, pagos, erros[id => mensagem], situacoes[id => situação]].
+ */
+function conferirBoletosInter(PDO $pdo, ?int $contaId = null): array
+{
+    $boletos = boletosEmAberto($pdo, $contaId);
+    $pagos = 0;
+    $erros = [];
+    $situacoes = [];
+    foreach ($boletos as $b) {
+        try {
+            $situacoes[$b['id']] = consultarBoletoInter($pdo, (int) $b['id']);
+            $pagos += $situacoes[$b['id']] === 'RECEBIDO' ? 1 : 0;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $erros[$b['id']] = $e->getMessage();
+        }
+    }
+    return [count($boletos), $pagos, $erros, $situacoes];
 }
