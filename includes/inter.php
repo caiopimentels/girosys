@@ -112,6 +112,7 @@ function interOperacaoChamada(string $metodo, string $caminho): string
         str_contains($caminho, '/oauth/') => 'token',
         str_ends_with($caminho, '/webhook') => match ($metodo) { 'PUT' => 'registrar_webhook', 'DELETE' => 'excluir_webhook', default => 'consultar_webhook' },
         str_contains($caminho, '/webhook/callbacks') => 'reenviar_webhook',
+        str_contains($caminho, '/cobrancas?') => 'listar_boletos',
         str_ends_with($caminho, '/pdf') => 'pdf_boleto',
         str_ends_with($caminho, '/cancelar') => 'cancelar_boleto',
         $metodo === 'POST' => 'emitir_boleto',
@@ -125,6 +126,7 @@ function rotulosOperacaoBanco(): array
         'token' => 'Autenticação (token)',
         'emitir_boleto' => 'Emissão de boleto',
         'consultar_boleto' => 'Consulta de boleto',
+        'listar_boletos' => 'Busca de boletos emitidos',
         'pdf_boleto' => 'PDF do boleto',
         'cancelar_boleto' => 'Cancelamento de boleto',
         'registrar_webhook' => 'Registro do webhook',
@@ -544,4 +546,244 @@ function conferirBoletosInter(PDO $pdo, ?int $contaId = null): array
         }
     }
     return [count($boletos), $pagos, $erros, $situacoes];
+}
+
+// ---------------------------------------------------------------
+// Boletos emitidos fora do sistema (no app/internet banking do Inter)
+// ---------------------------------------------------------------
+
+/**
+ * Cobranças do Inter com vencimento no período (todas as páginas, até 2.000).
+ * Cada item: codigo, nosso_numero, situacao, valor, vencimento, emissao, pagador_nome, pagador_documento, linha, barras, pix.
+ */
+function buscarCobrancasInter(PDO $pdo, array $conta, string $de, string $ate, ?string $documentoPagador = null): array
+{
+    interContextoTitulo(null, true);
+    $itens = [];
+    for ($pagina = 0; $pagina < 20; $pagina++) {
+        $query = array_filter([
+            'dataInicial' => $de, 'dataFinal' => $ate, 'filtrarDataPor' => 'VENCIMENTO',
+            'cpfCnpjPessoaPagadora' => $documentoPagador ? apenasDigitos($documentoPagador) : null,
+            'itensPorPagina' => 100, 'paginaAtual' => $pagina,
+        ], fn ($v) => $v !== null);
+        $r = interApi($pdo, $conta, 'GET', '/cobranca/v3/cobrancas?' . http_build_query($query));
+        foreach ((array) ($r['cobrancas'] ?? $r['content'] ?? []) as $item) {
+            $c = $item['cobranca'] ?? $item;
+            $itens[] = [
+                'codigo' => (string) ($c['codigoSolicitacao'] ?? ''),
+                'seu_numero' => (string) ($c['seuNumero'] ?? ''),
+                'nosso_numero' => (string) ($item['boleto']['nossoNumero'] ?? $c['nossoNumero'] ?? ''),
+                'situacao' => (string) ($c['situacao'] ?? ''),
+                'valor' => (float) ($c['valorNominal'] ?? 0),
+                'vencimento' => substr((string) ($c['dataVencimento'] ?? ''), 0, 10),
+                'emissao' => substr((string) ($c['dataEmissao'] ?? ''), 0, 10),
+                'pagador_nome' => (string) ($c['pagador']['nome'] ?? ''),
+                'pagador_documento' => apenasDigitos((string) ($c['pagador']['cpfCnpj'] ?? '')),
+                'linha' => $item['boleto']['linhaDigitavel'] ?? null,
+                'barras' => $item['boleto']['codigoBarras'] ?? null,
+                'pix' => $item['pix']['pixCopiaECola'] ?? null,
+            ];
+        }
+        $totalPaginas = (int) ($r['totalPaginas'] ?? 1);
+        if ($pagina + 1 >= $totalPaginas) {
+            break;
+        }
+    }
+    return array_values(array_filter($itens, fn ($i) => $i['codigo'] !== ''));
+}
+
+/** Liga ao título uma cobrança que já existe no Inter e atualiza a situação (dá baixa, se já paga). */
+function ligarCobrancaAoTitulo(PDO $pdo, array $titulo, array $conta, array $cobranca): string
+{
+    if (!in_array($titulo['status'], ['pendente', 'devolvido'], true)) {
+        throw new InvalidArgumentException('O título #' . $titulo['id'] . ' não está em aberto.');
+    }
+    $stmt = $pdo->prepare('SELECT id FROM contas_receber WHERE boleto_codigo = ? AND id <> ?');
+    $stmt->execute([$cobranca['codigo'], $titulo['id']]);
+    if ($outro = $stmt->fetchColumn()) {
+        throw new InvalidArgumentException('Este boleto do Inter já está ligado ao título #' . $outro . '.');
+    }
+    $pdo->prepare('UPDATE contas_receber SET boleto_conta_id = ?, boleto_codigo = ?, boleto_situacao = ?, boleto_emitido_em = ?, boleto_nosso_numero = ?,
+                   boleto_linha_digitavel = ?, boleto_codigo_barras = ?, boleto_pix = ?, conta_destino_id = ? WHERE id = ?')
+        ->execute([$conta['id'], $cobranca['codigo'], $cobranca['situacao'] ?: null, $cobranca['emissao'] ? $cobranca['emissao'] . ' 00:00:00' : date('Y-m-d H:i:s'),
+            $cobranca['nosso_numero'] ?: null, $cobranca['linha'] ?? null, $cobranca['barras'] ?? null, $cobranca['pix'] ?? null, $conta['id'], $titulo['id']]);
+    try {
+        return consultarBoletoInter($pdo, (int) $titulo['id']);
+    } catch (Throwable $e) {
+        // O Inter não confirmou a cobrança: o título volta como estava.
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $pdo->prepare('UPDATE contas_receber SET boleto_conta_id = ?, boleto_codigo = ?, boleto_situacao = ?, boleto_emitido_em = ?, boleto_nosso_numero = ?,
+                       boleto_linha_digitavel = ?, boleto_codigo_barras = ?, boleto_pix = ?, conta_destino_id = ? WHERE id = ?')
+            ->execute([$titulo['boleto_conta_id'], $titulo['boleto_codigo'], $titulo['boleto_situacao'], $titulo['boleto_emitido_em'], $titulo['boleto_nosso_numero'],
+                $titulo['boleto_linha_digitavel'], $titulo['boleto_codigo_barras'], $titulo['boleto_pix'], $titulo['conta_destino_id'], $titulo['id']]);
+        throw $e;
+    }
+}
+
+/**
+ * Acha no Inter o boleto deste título e liga. Com nosso número (ou o código
+ * da cobrança), procura por ele; sem, pelo vencimento e valor do título —
+ * precisa ser um só. Devolve a situação.
+ */
+function vincularBoletoInter(PDO $pdo, array $titulo, array $conta, string $numero): string
+{
+    $numero = trim($numero);
+    if (preg_match('/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i', $numero)) {
+        // Código da cobrança (UUID): consulta direto.
+        interContextoTitulo((int) $titulo['id'], true);
+        $r = interApi($pdo, $conta, 'GET', '/cobranca/v3/cobrancas/' . rawurlencode($numero));
+        $c = $r['cobranca'] ?? [];
+        $achada = ['codigo' => $numero, 'situacao' => (string) ($c['situacao'] ?? ''), 'emissao' => substr((string) ($c['dataEmissao'] ?? ''), 0, 10),
+            'nosso_numero' => (string) ($r['boleto']['nossoNumero'] ?? ''), 'linha' => $r['boleto']['linhaDigitavel'] ?? null, 'barras' => $r['boleto']['codigoBarras'] ?? null, 'pix' => $r['pix']['pixCopiaECola'] ?? null];
+        return ligarCobrancaAoTitulo($pdo, $titulo, $conta, $achada);
+    }
+    // Procura em volta do vencimento (o boleto pode ter sido emitido com outra data).
+    $de = date('Y-m-d', strtotime($titulo['data_vencimento'] . ($numero !== '' ? ' -45 days' : '')));
+    $ate = date('Y-m-d', strtotime($titulo['data_vencimento'] . ($numero !== '' ? ' +45 days' : '')));
+    $cobrancas = array_filter(buscarCobrancasInter($pdo, $conta, $de, $ate), fn ($c) => !in_array($c['situacao'], ['CANCELADO', 'EXPIRADO'], true));
+    $digitos = apenasDigitos($numero);
+    if ($digitos !== '') {
+        $achadas = array_values(array_filter($cobrancas, fn ($c) => ltrim(apenasDigitos($c['nosso_numero']), '0') === ltrim($digitos, '0')
+            || ($c['linha'] && str_contains(apenasDigitos((string) $c['linha']), $digitos) && strlen($digitos) >= 20)));
+        if (!$achadas) {
+            throw new InvalidArgumentException('Não achei no ' . $conta['nome'] . ' um boleto com o nosso número ' . $numero . ' vencendo entre ' . formatDate($de) . ' e ' . formatDate($ate) . '. Confira o número e a conta.');
+        }
+    } else {
+        $achadas = array_values(array_filter($cobrancas, fn ($c) => abs($c['valor'] - (float) $titulo['valor']) < 0.005 && $c['vencimento'] === $titulo['data_vencimento']));
+        if (count($achadas) !== 1) {
+            throw new InvalidArgumentException(!$achadas
+                ? 'Não achei no ' . $conta['nome'] . ' boleto de ' . formatMoney($titulo['valor']) . ' vencendo em ' . formatDate($titulo['data_vencimento']) . '. Informe o nosso número.'
+                : 'Há ' . count($achadas) . ' boletos de ' . formatMoney($titulo['valor']) . ' vencendo em ' . formatDate($titulo['data_vencimento']) . ' no Inter. Informe o nosso número para escolher.');
+        }
+    }
+    interContextoTitulo((int) $titulo['id'], true);
+    return ligarCobrancaAoTitulo($pdo, $titulo, $conta, $achadas[0]);
+}
+
+/**
+ * Para a vinculação em lote: cobranças do período que ainda não estão em
+ * nenhum título, cada uma com o título em aberto (sem boleto) que bate em
+ * valor e vencimento — e, se houver, pelo documento ou nome do pagador.
+ */
+function sugerirVinculosInter(PDO $pdo, array $conta, string $de, string $ate): array
+{
+    $cobrancas = buscarCobrancasInter($pdo, $conta, $de, $ate);
+    $conhecidos = $pdo->query('SELECT boleto_codigo FROM contas_receber WHERE boleto_codigo IS NOT NULL')->fetchAll(PDO::FETCH_COLUMN);
+    $cobrancas = array_values(array_filter($cobrancas, fn ($c) => !in_array($c['codigo'], $conhecidos, true) && !in_array($c['situacao'], ['CANCELADO', 'EXPIRADO'], true)));
+
+    $stmt = $pdo->prepare("SELECT r.id, r.valor, r.data_vencimento, r.descricao, r.numero_titulo, e.nome AS pagador_nome, e.documento AS pagador_documento
+        FROM contas_receber r LEFT JOIN pessoas e ON e.id = r.emitente_id
+        WHERE r.status IN ('pendente', 'devolvido') AND (r.boleto_codigo IS NULL OR r.boleto_situacao IN ('CANCELADO', 'EXPIRADO'))
+          AND r.data_vencimento BETWEEN ? AND ? ORDER BY r.data_vencimento, r.id");
+    $stmt->execute([date('Y-m-d', strtotime($de . ' -45 days')), date('Y-m-d', strtotime($ate . ' +45 days'))]);
+    $titulos = $stmt->fetchAll();
+    $normal = fn ($n) => mb_strtolower(trim(preg_replace('/\s+/', ' ', iconv('UTF-8', 'ASCII//TRANSLIT', (string) $n))));
+    $usados = [];
+    foreach ($cobrancas as &$c) {
+        $melhor = null;
+        $pontosMelhor = 0;
+        foreach ($titulos as $t) {
+            if (isset($usados[$t['id']])) {
+                continue;
+            }
+            $pontos = 0;
+            if ($t['numero_titulo'] && $c['nosso_numero'] && ltrim(apenasDigitos($t['numero_titulo']), '0') === ltrim($c['nosso_numero'], '0')) {
+                $pontos += 10; // o nosso número já estava anotado no título
+            }
+            if (abs((float) $t['valor'] - $c['valor']) < 0.005) {
+                $pontos += 3;
+            }
+            if ($t['data_vencimento'] === $c['vencimento']) {
+                $pontos += 3;
+            }
+            if ($c['pagador_documento'] && $t['pagador_documento'] === $c['pagador_documento']) {
+                $pontos += 4;
+            } elseif ($c['pagador_nome'] && $normal($t['pagador_nome']) === $normal($c['pagador_nome'])) {
+                $pontos += 3;
+            }
+            // Precisa de valor + vencimento + pagador, ou do nosso número.
+            if ($pontos >= 9 && $pontos > $pontosMelhor) {
+                $melhor = $t;
+                $pontosMelhor = $pontos;
+            }
+        }
+        $c['sugestao'] = $melhor;
+        if ($melhor) {
+            $usados[$melhor['id']] = true;
+        }
+    }
+    unset($c);
+    return [$cobrancas, $titulos];
+}
+
+/**
+ * Teste da integração, passo a passo: certificado e chave, token, leitura de
+ * cobranças e webhook. Cada passo: [titulo, ok (true/false/null = aviso), detalhe].
+ * Não emite nada (a permissão de escrita só se vê ao emitir o primeiro boleto).
+ */
+function testarApiInter(PDO $pdo, array $conta): array
+{
+    $passos = [];
+    if ($falta = pendenciasInter($conta)) {
+        return [['Configuração', false, 'Falta: ' . implode(', ', $falta) . '.']];
+    }
+
+    // 1. Certificado e chave
+    $crt = @file_get_contents((string) $conta['inter_certificado']);
+    $key = @file_get_contents((string) $conta['inter_chave']);
+    $x509 = $crt ? @openssl_x509_read($crt) : false;
+    if (!$x509 || !$key) {
+        $passos[] = ['Certificado e chave', false, 'Não consegui ler o .crt ou o .key no servidor. Envie de novo os dois arquivos.'];
+        return $passos;
+    }
+    $info = openssl_x509_parse($x509);
+    $vence = (int) ($info['validTo_time_t'] ?? 0);
+    $par = @openssl_x509_check_private_key($x509, $key);
+    $dias = $vence ? (int) floor(($vence - time()) / 86400) : null;
+    $detalhe = 'Válido até ' . ($vence ? date('d/m/Y', $vence) : '?') . ($dias !== null ? ' (' . ($dias >= 0 ? 'faltam ' . $dias . ' dias' : 'VENCIDO') . ')' : '')
+        . ($par ? ' · a chave é deste certificado' : ' · a chave NÃO é deste certificado');
+    $passos[] = ['Certificado e chave', $par && $dias !== null && $dias >= 0 ? ($dias < 30 ? null : true) : false, $detalhe . ($dias !== null && $dias >= 0 && $dias < 30 ? ' — renove no Inter antes de vencer.' : '')];
+    if (!$par || ($dias !== null && $dias < 0)) {
+        return $passos;
+    }
+
+    // 2. Token (credenciais + certificado)
+    $inicio = microtime(true);
+    try {
+        interToken($pdo, $conta, true);
+        $passos[] = ['Autenticação (token)', true, 'Client ID, Client Secret e certificado aceitos pelo Inter (' . (int) round((microtime(true) - $inicio) * 1000) . ' ms) · ambiente ' . ($conta['inter_ambiente'] === 'sandbox' ? 'sandbox' : 'produção') . '.'];
+    } catch (Throwable $e) {
+        $passos[] = ['Autenticação (token)', false, $e->getMessage() . ' — confira Client ID/Secret, se o certificado é da mesma integração e o ambiente (produção/sandbox).'];
+        return $passos;
+    }
+    $conta = contaBancaria($pdo, (int) $conta['id']);
+
+    // 3. Leitura de cobranças (permissão de leitura)
+    try {
+        $lista = buscarCobrancasInter($pdo, $conta, date('Y-m-d'), date('Y-m-d', strtotime('+30 days')));
+        $abertos = count(array_filter($lista, fn ($c) => !in_array($c['situacao'], ['CANCELADO', 'EXPIRADO', 'RECEBIDO'], true)));
+        $passos[] = ['Leitura de boletos', true, 'Permissão de leitura OK · ' . count($lista) . ' boleto(s) no Inter vencendo nos próximos 30 dias (' . $abertos . ' em aberto).'];
+    } catch (Throwable $e) {
+        $passos[] = ['Leitura de boletos', false, $e->getMessage() . ' — na integração do Inter, marque a API de Cobrança com leitura (boleto-cobranca.read).'];
+    }
+
+    // 4. Webhook
+    try {
+        $wh = consultarWebhookInter($pdo, $conta);
+        $url = urlWebhookInter($pdo, $conta);
+        if (!$wh) {
+            $passos[] = ['Webhook', null, 'Nenhum webhook cadastrado no Inter: os pagamentos só baixam pela conferência (cron). Registre na aba Webhook de pagamento.'];
+        } elseif ($wh['webhookUrl'] === $url) {
+            $passos[] = ['Webhook', true, 'Cadastrado no Inter com o endereço deste sistema.'];
+        } else {
+            $passos[] = ['Webhook', null, 'O Inter tem outro endereço (' . $wh['webhookUrl'] . '). Registre de novo na aba Webhook de pagamento.'];
+        }
+    } catch (Throwable $e) {
+        $passos[] = ['Webhook', false, $e->getMessage()];
+    }
+
+    $passos[] = ['Emissão (escrita)', null, 'Só dá para confirmar emitindo um boleto. Se der "403" ao emitir, falta a permissão de escrita (boleto-cobranca.write) na integração.'];
+    return $passos;
 }

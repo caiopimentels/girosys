@@ -40,6 +40,7 @@ function operacoesAuditoria(): array
         'emissao_boleto' => 'Emissão de boleto',
         'consulta_boleto' => 'Consulta de boleto',
         'cancelamento_boleto' => 'Cancelamento de boleto',
+        'vinculo_boleto' => 'Boleto emitido fora ligado ao título',
         'baixa_automatica' => 'Baixa automática (banco)',
         'integracao' => 'Integração com o banco',
         'login' => 'Login',

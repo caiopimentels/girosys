@@ -66,6 +66,7 @@ require __DIR__ . '/../../includes/abas_conta_bancaria.php';
     </p>
     <form method="post" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = '<span class=&quot;spinner-border spinner-border-sm&quot;></span> Conferindo...';">
         <button class="btn btn-brand" <?= $boletos ? '' : 'disabled' ?>><i class="bi bi-arrow-repeat"></i> Conferir todos agora (<?= count($boletos) ?>)</button>
+        <a href="/contas/vincular_boletos.php?id=<?= (int) $id ?>" class="btn btn-outline-secondary ms-2"><i class="bi bi-link-45deg"></i> Vincular boletos emitidos fora do sistema</a>
     </form>
 </div>
 <?php endif; ?>

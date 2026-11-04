@@ -29,8 +29,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 . ($enviados ? ' · novo(s): ' . implode(', ', array_keys($enviados)) : ''));
             flash('success', 'Integração salva.' . (($falta = pendenciasInter(contaBancaria($pdo, $id))) ? ' Ainda falta: ' . implode(', ', $falta) . '.' : ' Agora teste a conexão.'));
         } elseif ($acao === 'testar') {
-            interToken($pdo, $conta, true);
-            flash('success', 'Conexão com o Banco Inter funcionando (token obtido com o certificado).');
+            $passos = testarApiInter($pdo, $conta);
+            $_SESSION['teste_api_' . $id] = ['quando' => date('Y-m-d H:i:s'), 'passos' => $passos];
+            $falhou = in_array(false, array_column($passos, 1), true);
+            registrarAtividade('contas_bancarias', 'integracao', 'Teste da API do Inter na conta ' . $conta['nome'] . ': ' . ($falhou ? 'com falha' : 'ok')
+                . ' · ' . implode('; ', array_map(fn ($p) => $p[0] . ' ' . ($p[1] === true ? 'ok' : ($p[1] === false ? 'FALHOU' : 'aviso')), $passos)));
+            if ($falhou) {
+                redirect('/contas/inter.php?id=' . $id . '#teste-api');
+            }
+            flash('success', 'Teste da API concluído — veja o resultado de cada passo abaixo.');
         }
     } catch (Throwable $e) {
         flash('danger', $e->getMessage());
@@ -91,16 +98,32 @@ require __DIR__ . '/../../includes/abas_conta_bancaria.php';
         </div>
     </form>
 
-    <?php if (contaTemInter($conta) && !$falta): ?>
-    <div class="secao">
-        <div class="secao-titulo"><i class="bi bi-plug"></i> Conexão</div>
-        <form method="post" class="d-flex flex-wrap align-items-center gap-2">
+    <?php $teste = $_SESSION['teste_api_' . $id] ?? null; ?>
+    <div class="secao" id="teste-api">
+        <div class="secao-titulo"><i class="bi bi-plug"></i> Testar a API</div>
+        <form method="post" class="d-flex flex-wrap align-items-center gap-2 mb-2" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = '<span class=&quot;spinner-border spinner-border-sm&quot;></span> Testando...';">
             <input type="hidden" name="acao" value="testar">
-            <button class="btn btn-outline-secondary"><i class="bi bi-plug"></i> Testar conexão</button>
-            <span class="small text-muted">Pede um token ao Inter com o certificado e as credenciais. Tudo o que é trocado com o banco fica na aba <a href="/contas/auditoria.php?id=<?= (int) $id ?>">Auditoria do banco</a>.</span>
+            <button class="btn btn-brand" <?= contaTemInter($conta) && !$falta ? '' : 'disabled' ?>><i class="bi bi-plug"></i> Testar API</button>
+            <span class="small text-muted">
+                <?php if (!contaTemInter($conta) || $falta): ?>
+                    Salve antes a integração completa (ativar, Client ID, Client Secret, certificado e chave).
+                <?php else: ?>
+                    Confere certificado e chave, pede um token, lê os boletos e o webhook — não emite nada. Tudo fica na <a href="/contas/auditoria.php?id=<?= (int) $id ?>">Auditoria do banco</a>.
+                <?php endif; ?>
+            </span>
         </form>
+        <?php if ($teste): ?>
+            <div class="small text-muted mb-1">Último teste: <?= formatDateTime($teste['quando']) ?></div>
+            <ul class="list-group">
+                <?php foreach ($teste['passos'] as [$tituloPasso, $ok, $detalhe]): ?>
+                    <li class="list-group-item d-flex gap-2 align-items-start">
+                        <i class="bi <?= $ok === true ? 'bi-check-circle-fill text-success' : ($ok === false ? 'bi-x-circle-fill text-danger' : 'bi-exclamation-circle-fill text-warning') ?> mt-1"></i>
+                        <div><div class="fw-semibold"><?= e($tituloPasso) ?></div><div class="small <?= $ok === false ? 'text-danger' : 'text-muted' ?>"><?= e($detalhe) ?></div></div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
     </div>
-    <?php endif; ?>
 </div>
 
 <?php require __DIR__ . '/../../includes/layout_footer.php'; ?>

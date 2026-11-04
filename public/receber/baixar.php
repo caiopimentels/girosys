@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? '';
     if (in_array($acao, ['receber', 'devolver', 'estornar', 'devolver_cliente', 'desfazer_cliente'], true)) {
         exigirPermissaoAcao('baixar_receber', 'Seu perfil não pode dar baixa nem estornar recebimentos.');
-    } elseif (in_array($acao, ['emitir_boleto', 'cancelar_boleto'], true)) {
+    } elseif (in_array($acao, ['emitir_boleto', 'cancelar_boleto', 'vincular_boleto'], true)) {
         exigirPermissaoAcao('emitir_boleto', 'Seu perfil não pode emitir nem cancelar boletos.');
     }
     $pdo->beginTransaction();
@@ -78,6 +78,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             emitirBoletoInter($pdo, $t, $contaBoleto);
             registrarAtividade('boletos', 'emissao_boleto', 'Boleto emitido no ' . $contaBoleto['nome'] . ' para o ' . $rotuloTitulo);
             flash('success', 'Boleto emitido no Banco Inter.');
+            redirecionarAposAcao('/receber/baixar.php?id=' . $id);
+        } elseif ($acao === 'vincular_boleto') {
+            $contaBoleto = contaBancaria($pdo, (int) ($_POST['boleto_conta_id'] ?? 0));
+            if (!$contaBoleto || pendenciasInter($contaBoleto)) {
+                throw new InvalidArgumentException('Escolha uma conta com a integração do Inter configurada.');
+            }
+            $pdo->commit();
+            $situacao = vincularBoletoInter($pdo, $t, $contaBoleto, input('nosso_numero'));
+            registrarAtividade('boletos', 'vinculo_boleto', 'Boleto já emitido no ' . $contaBoleto['nome'] . ' ligado ao ' . $rotuloTitulo . ' (' . rotuloSituacaoBoleto($situacao) . ')');
+            flash('success', 'Boleto do Inter ligado ao título · ' . rotuloSituacaoBoleto($situacao) . ($situacao === 'RECEBIDO' ? ' — já estava pago, baixa lançada.' : '. Agora ele baixa sozinho quando for pago.'));
             redirecionarAposAcao('/receber/baixar.php?id=' . $id);
         } elseif ($acao === 'consultar_boleto') {
             $pdo->commit();
@@ -266,6 +276,21 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <span class="small text-muted">Multa <?= $mBol > 0 ? e(rtrim(rtrim(formatDecimal($mBol, 2), '0'), ',')) . '%' : 'não' ?> · juros <?= $jBol > 0 ? e(rtrim(rtrim(formatDecimal($jBol, 2), '0'), ',')) . '% a.m.' : 'não' ?> (regra do tipo)</span>
                 </form>
             <?php endif; ?>
+            <?php if ($contasBoleto && in_array($t['status'], ['pendente', 'devolvido'], true)): ?>
+            <details class="mt-3" <?= $t['tipo'] === 'boleto' && $t['numero_titulo'] ? 'open' : '' ?>>
+                <summary class="small">Este boleto já foi emitido no Inter (pelo app ou internet banking)? Ligar ao título</summary>
+                <form method="post" class="d-flex flex-wrap gap-2 align-items-end mt-2" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = 'Procurando no Inter...';">
+                    <input type="hidden" name="acao" value="vincular_boleto">
+                    <div><label class="form-label small mb-1">Conta do Inter</label><select name="boleto_conta_id" class="form-select form-select-sm">
+                        <?php foreach ($contasBoleto as $cb): ?><option value="<?= (int) $cb['id'] ?>" <?= (int) $cb['id'] === (int) $t['conta_destino_id'] ? 'selected' : '' ?>><?= e($cb['nome']) ?></option><?php endforeach; ?></select></div>
+                    <div><label class="form-label small mb-1">Nosso número</label><input type="text" name="nosso_numero" class="form-control form-control-sm" style="width: 200px;" inputmode="numeric"
+                        placeholder="em branco = procurar" value="<?= e($t['tipo'] === 'boleto' ? (string) $t['numero_titulo'] : '') ?>"></div>
+                    <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-link-45deg"></i> Procurar e ligar</button>
+                    <div class="form-text w-100 mt-0">Sem o nosso número, o sistema procura no Inter um boleto de <?= formatMoney($t['valor']) ?> vencendo em <?= formatDate($t['data_vencimento']) ?>. Ligado, ele baixa sozinho quando for pago (webhook e conferência), como os emitidos pelo sistema.
+                        Muitos de uma vez: <?= usuarioEhAdmin() ? '<a href="/contas/vincular_boletos.php">Vincular boletos emitidos fora do sistema</a>' : 'peça ao administrador (Contas bancárias › Conferir boletos)' ?>.</div>
+                </form>
+            </details>
+            <?php endif; ?>
         <?php endif; ?>
     </div></div>
     <?php endif; ?>
@@ -283,7 +308,25 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <div class="col-md-3"><label class="form-label small">Vencimento</label><input type="date" name="data_vencimento" class="form-control" value="<?= e($t['data_vencimento']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Cai na conta</label><select name="conta_destino_id" class="form-select"><?= opcoesContas($pdo, idOuNull($t['conta_destino_id']), '—') ?></select></div>
                     <div class="col-md-6"><label class="form-label small">Pagador</label><input type="text" name="pagador_nome" class="form-control" data-busca-pessoa="pagador" autocomplete="off-busca" value="<?= e($t['emitente_nome']) ?>"></div>
-                    <div class="col-md-6"><label class="form-label small">CPF/CNPJ do pagador <span class="text-muted">(se novo)</span></label><input type="text" name="pagador_documento" class="form-control" inputmode="numeric"></div>
+                    <?php $docPagador = $t['emitente_documento'] ? documentoFormatado($t['emitente_documento']) : ''; ?>
+                    <div class="col-md-6"><label class="form-label small">CPF/CNPJ do pagador <span class="text-muted" id="doc-pagador-nota"><?= $t['emitente_id'] ? ($docPagador ? '(do cadastro)' : '(não está no cadastro — preencha)') : '' ?></span></label>
+                        <input type="text" name="pagador_documento" id="doc-pagador" class="form-control" inputmode="numeric" value="<?= e($docPagador) ?>" <?= $docPagador ? 'readonly' : '' ?>
+                               data-nome-original="<?= e($t['emitente_nome'] ?? '') ?>" data-doc-original="<?= e($docPagador) ?>"></div>
+                    <script>
+                    // Trocou o pagador: o documento passa a ser o do novo (se ele ainda não tiver cadastro).
+                    (function () {
+                        const doc = document.getElementById('doc-pagador'), nota = document.getElementById('doc-pagador-nota');
+                        const nome = doc.closest('form').querySelector('[name="pagador_nome"]');
+                        const conferir = () => {
+                            const mesmo = nome.value.trim().toLowerCase() === doc.dataset.nomeOriginal.trim().toLowerCase();
+                            doc.readOnly = mesmo && doc.dataset.docOriginal !== '';
+                            if (mesmo) { doc.value = doc.dataset.docOriginal; nota.textContent = doc.dataset.docOriginal ? '(do cadastro)' : '(não está no cadastro — preencha)'; }
+                            else { if (doc.value === doc.dataset.docOriginal) doc.value = ''; nota.textContent = '(se for um pagador novo)'; }
+                        };
+                        nome.addEventListener('input', conferir);
+                        nome.addEventListener('change', conferir);
+                    })();
+                    </script>
                     <div class="col-md-3"><label class="form-label small">Banco</label><input type="text" name="banco_titulo" class="form-control" value="<?= e($t['banco_titulo']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Nº</label><input type="text" name="numero_titulo" class="form-control" value="<?= e($t['numero_titulo']) ?>"></div>
                     <div class="col-md-6"></div>
