@@ -4,20 +4,25 @@
 //   deságio        — juros descontados dos títulos nas operações (pela data base);
 //   repasses       — juros cobrados sobre os repasses quitados nas operações;
 //   atraso         — juros e multa por atraso recebidos (acréscimo na baixa, pela data do recebimento);
-//   renegociação   — juros/multa levados para os novos títulos ou para o cliente (pela data da renegociação).
+//   renegociação   — juros/multa levados para os novos títulos ou para o cliente (pela data da renegociação);
+//   arredondamento — parte da diferença da operação que não paguei ao cliente (pela data base).
 
 /** Linhas de ganho no período, cada uma com data, cliente e componente. */
 function ganhosPeriodo(PDO $pdo, string $de, string $ate): array
 {
     $linhas = [];
 
-    $stmt = $pdo->prepare('SELECT o.id, o.data_base, o.cliente_id, p.nome AS cliente_nome, o.total_bruto, o.total_liquido, o.total_juros, o.juros_emprestimo,
+    $stmt = $pdo->prepare('SELECT o.id, o.data_base, o.cliente_id, p.nome AS cliente_nome, o.total_bruto, o.total_liquido, o.total_juros, o.juros_emprestimo, o.desconto_pagamento,
             (SELECT COALESCE(SUM(r.juros), 0) FROM contas_receber r WHERE r.operacao_id = o.id AND r.status = \'recebido\') AS desagio_realizado
         FROM operacoes o JOIN pessoas p ON p.id = o.cliente_id WHERE o.data_base BETWEEN ? AND ?');
     $stmt->execute([$de, $ate]);
     foreach ($stmt->fetchAll() as $o) {
         $linhas[] = ['data' => $o['data_base'], 'cliente_id' => (int) $o['cliente_id'], 'cliente_nome' => $o['cliente_nome'], 'componente' => 'desagio',
             'valor' => (float) $o['total_juros'], 'realizado' => (float) $o['desagio_realizado'], 'operacao' => $o];
+        if ($o['desconto_pagamento'] > 0) {
+            $linhas[] = ['data' => $o['data_base'], 'cliente_id' => (int) $o['cliente_id'], 'cliente_nome' => $o['cliente_nome'], 'componente' => 'arredondamento',
+                'valor' => (float) $o['desconto_pagamento']];
+        }
         if ($o['juros_emprestimo'] > 0) {
             $linhas[] = ['data' => $o['data_base'], 'cliente_id' => (int) $o['cliente_id'], 'cliente_nome' => $o['cliente_nome'], 'componente' => 'repasses',
                 'valor' => (float) $o['juros_emprestimo']];
@@ -72,6 +77,7 @@ function componentesGanho(): array
         'repasses' => 'Juros dos repasses',
         'atraso' => 'Juros e multa por atraso',
         'renegociacao' => 'Juros/multa de renegociação',
+        'arredondamento' => 'Arredondamentos',
     ];
 }
 

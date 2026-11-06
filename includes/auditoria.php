@@ -112,10 +112,15 @@ function descricaoPagamentoClienteAuditoria(PDO $pdo, int $id): string
     $stmt = $pdo->prepare('SELECT * FROM operacoes WHERE id = ?');
     $stmt->execute([$id]);
     $o = $stmt->fetch();
-    $p = $o ? pagamentoClienteOperacao($pdo, $o) : ['situacao' => 'sem_diferenca'];
+    if (!$o) {
+        return '';
+    }
+    $p = pagamentoClienteOperacao($pdo, $o);
+    $extra = ($p['imediato'] > 0 && $p['imediato'] < (float) $o['saldo'] ? ' · pago ' . formatMoney($p['imediato']) . ' em ' . formatDate($p['data_imediato']) : '')
+        . ($p['desconto'] > 0 ? ' · arredondamento ' . formatMoney($p['desconto']) . ' (não pago ao cliente)' : '');
     return match ($p['situacao']) {
-        'pago' => ' · diferença ' . formatMoney($o['saldo']) . ' paga ao cliente em ' . formatDate($p['data']),
-        'agendado', 'parcial' => ' · pagamento de ' . formatMoney($o['saldo']) . ' ao cliente agendado para ' . formatDate($p['data']) . ' (conta a pagar #' . $p['conta_pagar']['id'] . ')',
+        'pago' => ' · diferença ' . formatMoney($o['saldo']) . ' paga ao cliente em ' . formatDate($p['data']) . $extra,
+        'agendado', 'parcial' => ' · ' . formatMoney($p['falta']) . ' ao cliente agendado para ' . formatDate($p['data']) . ' (conta a pagar #' . $p['conta_pagar']['id'] . ')' . $extra,
         'nao_lancado' => ' · diferença ' . formatMoney($o['saldo']) . ' ao cliente não lançada',
         default => '',
     };

@@ -53,6 +53,12 @@ function tiposTitulo(bool $todos = false): array
     return $tipos;
 }
 
+/** Tipos que registram boleto no banco (Cadastros › Tipos de recebimento › "Registra boleto"). */
+function tiposComBoleto(PDO $pdo): array
+{
+    return array_keys(array_filter(configRecebimento($pdo), fn ($c) => !empty($c['gera_boleto'])));
+}
+
 function tipoTituloLabel(string $tipo): string
 {
     return tiposTitulo(true)[$tipo] ?? ucfirst($tipo);

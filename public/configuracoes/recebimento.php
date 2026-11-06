@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('/configuracoes/recebimento.php');
     }
 
-    $upd = $pdo->prepare('UPDATE tipos_recebimento SET nome = ?, ativo = ?, modo = ?, multa_percent = ?, juros_mes = ? WHERE tipo = ?');
+    $upd = $pdo->prepare('UPDATE tipos_recebimento SET nome = ?, ativo = ?, modo = ?, multa_percent = ?, juros_mes = ?, gera_boleto = ? WHERE tipo = ?');
     $antesTipos = array_column($pdo->query('SELECT * FROM tipos_recebimento')->fetchAll(), null, 'tipo');
     $mudancas = [];
     foreach ((array) ($_POST['config'] ?? []) as $tipo => $c) {
@@ -30,13 +30,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $multa = trim((string) ($c['multa'] ?? '')) === '' ? null : paraDecimal($c['multa']);
         $juros = trim((string) ($c['juros'] ?? '')) === '' ? null : paraDecimal($c['juros']);
         $ativo = $tipo === 'outro' || !empty($c['ativo']) ? 1 : 0;
-        $upd->execute([$nome, $ativo, $modo, $multa, $juros, (string) $tipo]);
+        $boleto = !empty($c['gera_boleto']) ? 1 : 0;
+        $upd->execute([$nome, $ativo, $modo, $multa, $juros, $boleto, (string) $tipo]);
         $a = $antesTipos[$tipo] ?? [];
         $num = fn ($v) => $v === null || $v === '' ? '' : rtrim(rtrim(number_format((float) $v, 4, ',', ''), '0'), ',');
         $mudou = descreverAlteracoes(
-            ['nome' => $a['nome'] ?? '', 'ativo' => !empty($a['ativo']) ? 'sim' : 'não', 'modo' => modosAtualizacao()[$a['modo'] ?? ''] ?? '', 'multa' => $num($a['multa_percent'] ?? null), 'juros' => $num($a['juros_mes'] ?? null)],
-            ['nome' => $nome, 'ativo' => $ativo ? 'sim' : 'não', 'modo' => modosAtualizacao()[$modo], 'multa' => $num($multa), 'juros' => $num($juros)],
-            ['nome' => 'Nome', 'ativo' => 'Ativo', 'modo' => 'Atualizar por', 'multa' => 'Multa %', 'juros' => 'Juros % a.m.']);
+            ['nome' => $a['nome'] ?? '', 'ativo' => !empty($a['ativo']) ? 'sim' : 'não', 'modo' => modosAtualizacao()[$a['modo'] ?? ''] ?? '', 'multa' => $num($a['multa_percent'] ?? null), 'juros' => $num($a['juros_mes'] ?? null), 'boleto' => !empty($a['gera_boleto']) ? 'sim' : 'não'],
+            ['nome' => $nome, 'ativo' => $ativo ? 'sim' : 'não', 'modo' => modosAtualizacao()[$modo], 'multa' => $num($multa), 'juros' => $num($juros), 'boleto' => $boleto ? 'sim' : 'não'],
+            ['nome' => 'Nome', 'ativo' => 'Ativo', 'modo' => 'Atualizar por', 'multa' => 'Multa %', 'juros' => 'Juros % a.m.', 'boleto' => 'Registra boleto']);
         if ($mudou !== 'nenhum campo alterado') {
             $mudancas[] = $nome . ' (' . $mudou . ')';
         }
@@ -52,9 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $n = $_POST['novo'];
         $modo = array_key_exists($n['modo'] ?? '', modosAtualizacao()) ? $n['modo'] : 'cliente';
-        $pdo->prepare('INSERT INTO tipos_recebimento (tipo, nome, modo, multa_percent, juros_mes, ordem) VALUES (?, ?, ?, ?, ?, 50)')
+        $pdo->prepare('INSERT INTO tipos_recebimento (tipo, nome, modo, multa_percent, juros_mes, gera_boleto, ordem) VALUES (?, ?, ?, ?, ?, ?, 50)')
             ->execute([$chave, $novoNome, $modo, trim((string) ($n['multa'] ?? '')) === '' ? null : paraDecimal($n['multa']),
-                trim((string) ($n['juros'] ?? '')) === '' ? null : paraDecimal($n['juros'])]);
+                trim((string) ($n['juros'] ?? '')) === '' ? null : paraDecimal($n['juros']), !empty($n['gera_boleto']) ? 1 : 0]);
     }
     if ($mudancas) {
         registrarAtividade('tipos_recebimento', 'edicao', 'Tipos de recebimento: ' . implode('; ', $mudancas));
@@ -89,7 +90,7 @@ require __DIR__ . '/../../includes/abas_cadastros_auxiliares.php';
 <form method="post" id="form-config" style="max-width: 1100px;">
     <div class="card">
         <table class="table mb-0 align-middle">
-            <thead><tr><th>Tipo</th><th>Atualizar vencido por</th><th style="width: 120px;">Multa (%)</th><th style="width: 140px;">Juros (% a.m.)</th><th class="text-center" style="width: 80px;">Ativo</th><th class="text-center" style="width: 80px;">Títulos</th><th style="width: 50px;"></th></tr></thead>
+            <thead><tr><th>Tipo</th><th>Atualizar vencido por</th><th style="width: 120px;">Multa (%)</th><th style="width: 140px;">Juros (% a.m.)</th><th class="text-center" style="width: 110px;" title="Títulos deste tipo podem ter o boleto registrado no banco (Contas a receber › Registrar boleto). Cheque, depósito... não registram.">Registra boleto</th><th class="text-center" style="width: 80px;">Ativo</th><th class="text-center" style="width: 80px;">Títulos</th><th style="width: 50px;"></th></tr></thead>
             <tbody>
             <?php foreach ($tipos as $c): $tipo = $c['tipo']; $qtd = (int) ($usos[$tipo] ?? 0); ?>
                 <tr class="linha-config <?= $c['ativo'] ? '' : 'opacity-50' ?>">
@@ -101,6 +102,11 @@ require __DIR__ . '/../../includes/abas_cadastros_auxiliares.php';
                     </td>
                     <td><input type="text" name="config[<?= e($tipo) ?>][multa]" class="form-control form-control-sm proprio" inputmode="decimal" placeholder="Ex.: 2" value="<?= e($pct($c['multa_percent'])) ?>"></td>
                     <td><input type="text" name="config[<?= e($tipo) ?>][juros]" class="form-control form-control-sm proprio" inputmode="decimal" placeholder="Ex.: 1" value="<?= e($pct($c['juros_mes'])) ?>"></td>
+                    <td class="text-center">
+                        <div class="form-check form-switch d-inline-block m-0">
+                            <input type="checkbox" class="form-check-input" name="config[<?= e($tipo) ?>][gera_boleto]" value="1" <?= !empty($c['gera_boleto']) ? 'checked' : '' ?>>
+                        </div>
+                    </td>
                     <td class="text-center">
                         <div class="form-check form-switch d-inline-block m-0">
                             <input type="checkbox" class="form-check-input" name="config[<?= e($tipo) ?>][ativo]" value="1" <?= $c['ativo'] ? 'checked' : '' ?> <?= $tipo === 'outro' ? 'disabled title="O tipo padrão fica sempre ativo"' : '' ?>
@@ -126,6 +132,7 @@ require __DIR__ . '/../../includes/abas_cadastros_auxiliares.php';
                     </td>
                     <td><input type="text" name="novo[multa]" class="form-control form-control-sm proprio" inputmode="decimal" placeholder="Ex.: 2"></td>
                     <td><input type="text" name="novo[juros]" class="form-control form-control-sm proprio" inputmode="decimal" placeholder="Ex.: 1"></td>
+                    <td class="text-center"><div class="form-check form-switch d-inline-block m-0"><input type="checkbox" class="form-check-input" name="novo[gera_boleto]" value="1"></div></td>
                     <td colspan="3" class="small text-muted">entra ao salvar</td>
                 </tr>
             </tbody>
@@ -133,7 +140,7 @@ require __DIR__ . '/../../includes/abas_cadastros_auxiliares.php';
     </div>
     <div class="form-text mt-2">
         Tipo desativado não aparece para novos lançamentos, mas os títulos que já têm esse tipo continuam com ele.
-        Só dá para excluir tipo que nenhum título usa.
+        Só dá para excluir tipo que nenhum título usa. <strong>Registra boleto</strong>: os títulos do tipo mostram o botão de registrar o boleto no banco (um por um ou os selecionados) no contas a receber.
     </div>
 </form>
 <script>

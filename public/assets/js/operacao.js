@@ -352,6 +352,16 @@
         $('#data_pagamento_cliente').required = saldo > 0 && agendado;
         $('#conta_pagamento_id').required = saldo > 0 && !agendado;
         $('#conta_pagamento_id').options[0].textContent = agendado ? 'Sai de qual conta? (opcional)' : 'Sai de qual conta?';
+        // Pago a menor (ex.: 4.027,05 → 4.000,00): o que falta é arredondamento ou fica devendo.
+        $('#bloco-valor-pago').style.display = agendado ? 'none' : '';
+        $('#valor_pago_cliente').placeholder = reais(Math.max(0, saldo));
+        const pagoDigitado = Moeda.ler($('#valor_pago_cliente').value);
+        const resto = !agendado && pagoDigitado > 0 ? arred(saldo - pagoDigitado) : 0;
+        $('#bloco-resto').style.display = resto > 0 ? '' : 'none';
+        $('#r-resto').textContent = reais(resto);
+        $('#valor_pago_cliente').classList.toggle('is-invalid', !agendado && pagoDigitado > saldo + 0.004);
+        $('#vencimento_resto_cliente').required = resto > 0 && $('#resto-agendar').checked;
+        $('#vencimento_resto_cliente').disabled = !(resto > 0 && $('#resto-agendar').checked);
         $('#bloco-residual').style.display = saldo < 0 ? '' : 'none';
         $('#residual_vencimento').disabled = !$('#residual-receber').checked;
 
@@ -368,7 +378,8 @@
             limite.innerHTML = '';
         }
     }
-    document.querySelectorAll('[name="pagamento_cliente"]').forEach((r) => r.addEventListener('change', recalcular));
+    document.querySelectorAll('[name="pagamento_cliente"], [name="resto_cliente"]').forEach((r) => r.addEventListener('change', recalcular));
+    $('#valor_pago_cliente').addEventListener('input', recalcular);
     document.querySelectorAll('[name="residual_modo"]').forEach((r) => r.addEventListener('change', recalcular));
     $('#btn-add-titulo').addEventListener('click', () => campo(adicionarTitulo(), 'vencimento').focus());
 

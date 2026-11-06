@@ -40,6 +40,15 @@ $stmt->execute([$em30]);
 $faturas30 = (float) $stmt->fetchColumn();
 
 $adiantadoAberto = totalAdiantadoEmAberto($pdo);
+
+// Patrimônio: o que tenho em conta + o que me devem (repasses e títulos) − o que devo (despesas e faturas em aberto).
+$pagarAberto = (float) $pdo->query("SELECT COALESCE(SUM(valor - COALESCE(valor_pago, 0)), 0) FROM contas_pagar WHERE status = 'pendente'")->fetchColumn();
+$faturasAberto = (float) $pdo->query(
+    "SELECT COALESCE(SUM(falta), 0) FROM (SELECT SUM(p.valor) - COALESCE(f.valor_pago, 0) AS falta FROM cartao_faturas f JOIN cartao_parcelas p ON p.fatura_id = f.id
+     WHERE f.status = 'aberta' GROUP BY f.id) x"
+)->fetchColumn();
+$receberAberto = (float) $receber['pendente'] + (float) $receber['devolvido'];
+$patrimonio = round($saldoGlobal + $adiantadoAberto + $receberAberto - $pagarAberto - $faturasAberto, 2);
 $lucroMes = (float) $pdo->query(
     "SELECT COALESCE(SUM(total_juros + juros_emprestimo), 0) FROM operacoes WHERE data_base BETWEEN DATE_FORMAT(CURDATE(), '%Y-%m-01') AND LAST_DAY(CURDATE())"
 )->fetchColumn();
@@ -81,6 +90,22 @@ require __DIR__ . '/../includes/layout_header.php';
 
 <div class="secao">
     <div class="secao-titulo"><i class="bi bi-graph-up"></i> Resumo</div>
+    <div class="card mb-3 border-success"><div class="card-body d-flex flex-wrap align-items-center gap-4">
+        <div>
+            <div class="kpi-rotulo">Patrimônio total</div>
+            <div class="kpi-valor <?= $patrimonio < 0 ? 'valor-negativo' : 'valor-positivo' ?>" style="font-size: 2rem;"><?= formatMoney($patrimonio) ?></div>
+        </div>
+        <div class="d-flex flex-wrap align-items-center gap-3 small text-num">
+            <div><div class="text-muted">Em conta</div><div class="fw-semibold"><?= formatMoney($saldoGlobal) ?></div></div>
+            <div class="text-muted fs-5">+</div>
+            <div><div class="text-muted">Repasses a clientes</div><div class="fw-semibold"><?= formatMoney($adiantadoAberto) ?></div></div>
+            <div class="text-muted fs-5">+</div>
+            <div><div class="text-muted">A receber (títulos)</div><div class="fw-semibold"><?= formatMoney($receberAberto) ?></div></div>
+            <div class="text-muted fs-5">−</div>
+            <div title="Contas a pagar em aberto (inclui pagamentos agendados a clientes) e faturas de cartão em aberto"><div class="text-muted">Despesas em aberto</div><div class="fw-semibold valor-negativo"><?= formatMoney($pagarAberto + $faturasAberto) ?></div>
+                <div class="text-muted" style="font-size: .75rem;">contas <?= formatMoney($pagarAberto) ?> · cartões <?= formatMoney($faturasAberto) ?></div></div>
+        </div>
+    </div></div>
     <div class="row g-3">
         <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body">
             <div class="kpi-rotulo">Saldo global</div>

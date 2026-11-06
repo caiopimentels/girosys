@@ -16,6 +16,9 @@ $estado = [
     'observacao' => '',
     'pagamento_cliente' => 'pago',
     'data_pagamento_cliente' => date('Y-m-d'),
+    'valor_pago_cliente' => '',
+    'resto_cliente' => 'desconto',
+    'vencimento_resto_cliente' => '',
     'conta_pagamento_id' => '',
     'residual_modo' => 'receber',
     'residual_vencimento' => date('Y-m-d', strtotime('+30 days')),
@@ -62,6 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'observacao' => input('observacao'),
         'pagamento_cliente' => input('pagamento_cliente') === 'agendado' ? 'agendado' : 'pago',
         'data_pagamento_cliente' => dataInput('data_pagamento_cliente') ?? '',
+        'valor_pago_cliente' => input('valor_pago_cliente'),
+        'resto_cliente' => input('resto_cliente') === 'agendar' ? 'agendar' : 'desconto',
+        'vencimento_resto_cliente' => dataInput('vencimento_resto_cliente') ?? '',
         'conta_pagamento_id' => input('conta_pagamento_id'),
         'residual_modo' => input('residual_modo') === 'adiantamento' ? 'adiantamento' : 'receber',
         'residual_vencimento' => dataInput('residual_vencimento') ?? '',
@@ -92,6 +98,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'adiantamentos' => $adiantamentos,
             'pagamento_cliente' => $estado['pagamento_cliente'],
             'data_pagamento_cliente' => $estado['data_pagamento_cliente'],
+            'valor_pago_cliente' => paraDecimal($estado['valor_pago_cliente']),
+            'resto_cliente' => $estado['resto_cliente'],
+            'vencimento_resto_cliente' => $estado['vencimento_resto_cliente'],
             'conta_pagamento_id' => $estado['conta_pagamento_id'],
             'residual_modo' => $estado['residual_modo'],
             'residual_vencimento' => $estado['residual_vencimento'],
@@ -270,6 +279,22 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <label class="form-label small mt-2 mb-0" for="data_pagamento_cliente" id="rotulo-data-pagamento">Pago em</label>
                     <input type="date" name="data_pagamento_cliente" id="data_pagamento_cliente" class="form-control form-control-sm" value="<?= e($estado['data_pagamento_cliente']) ?>">
                     <select name="conta_pagamento_id" id="conta_pagamento_id" class="form-select form-select-sm mt-2"><?= opcoesContas($pdo, idOuNull($estado['conta_pagamento_id']), 'Sai de qual conta?') ?></select>
+                    <div id="bloco-valor-pago">
+                        <label class="form-label small mt-2 mb-0" for="valor_pago_cliente">Valor pago <span class="text-muted">(se pagou diferente)</span></label>
+                        <input type="text" name="valor_pago_cliente" id="valor_pago_cliente" class="form-control form-control-sm text-end" data-moeda inputmode="decimal" value="<?= e($estado['valor_pago_cliente']) ?>">
+                        <div id="bloco-resto" class="mt-2 p-2 rounded bg-body-tertiary" style="display: none;">
+                            <div class="small fw-semibold mb-1">Faltam <span id="r-resto">R$ 0,00</span>:</div>
+                            <div class="form-check">
+                                <input type="radio" class="form-check-input" name="resto_cliente" id="resto-desconto" value="desconto" <?= $estado['resto_cliente'] !== 'agendar' ? 'checked' : '' ?>>
+                                <label class="form-check-label small" for="resto-desconto">Arredondamento: fica para mim (entra no lucro)</label>
+                            </div>
+                            <div class="form-check">
+                                <input type="radio" class="form-check-input" name="resto_cliente" id="resto-agendar" value="agendar" <?= $estado['resto_cliente'] === 'agendar' ? 'checked' : '' ?>>
+                                <label class="form-check-label small" for="resto-agendar">Ainda devo ao cliente: pagar em</label>
+                            </div>
+                            <input type="date" name="vencimento_resto_cliente" id="vencimento_resto_cliente" class="form-control form-control-sm mt-1" value="<?= e($estado['vencimento_resto_cliente']) ?>">
+                        </div>
+                    </div>
                 </div>
 
                 <div id="bloco-residual" class="mt-3">

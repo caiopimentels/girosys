@@ -24,7 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['pa
         if ($_POST['acao'] === 'pagamento_cliente') {
             $modo = input('pagamento_cliente') === 'agendado' ? 'agendado' : 'pago';
             $data = dataInput('data_pagamento_cliente') ?? throw new InvalidArgumentException($modo === 'pago' ? 'Informe a data do pagamento.' : 'Informe a data prevista.');
-            registrarPagamentoCliente($pdo, $id, $modo, $data, idOuNull($_POST['conta_pagamento_id'] ?? null));
+            registrarPagamentoCliente($pdo, $id, $modo, $data, idOuNull($_POST['conta_pagamento_id'] ?? null),
+                decimalInput('valor_pago_cliente') ?: null, input('resto_cliente') === 'agendar' ? 'agendar' : 'desconto', dataInput('vencimento_resto_cliente'));
             registrarAtividade('operacoes', 'pagamento', 'Pagamento ao cliente: ' . resumoOperacaoAuditoria($pdo, $id) . descricaoPagamentoClienteAuditoria($pdo, $id));
             flash('success', $modo === 'pago' ? 'Pagamento ao cliente lançado.' : 'Pagamento ao cliente agendado em Contas a pagar.');
         } else {
@@ -135,13 +136,19 @@ require __DIR__ . '/../../includes/layout_header.php';
         <div class="col-md-3"><label class="form-label small mb-0">Data (paga ou prevista)</label><input type="date" name="data_pagamento_cliente" class="form-control form-control-sm" value="<?= e($op['data_base']) ?>" required></div>
         <div class="col-md-3"><label class="form-label small mb-0">Conta</label><select name="conta_pagamento_id" class="form-select form-select-sm"><?= opcoesContas($pdo, null, 'Sai de qual conta?') ?></select></div>
         <div class="col-md-2"><button class="btn btn-sm btn-brand w-100"><i class="bi bi-check-lg"></i> Lançar</button></div>
+        <div class="col-md-4 offset-md-4"><label class="form-label small mb-0">Valor pago <span class="text-muted">(se pagou diferente)</span></label><input type="text" name="valor_pago_cliente" class="form-control form-control-sm text-end" data-moeda placeholder="<?= formatDecimal($op['saldo']) ?>"></div>
+        <div class="col-md-4 small">
+            <div class="text-muted">Se pagou menos, o que falta:</div>
+            <div class="form-check"><input type="radio" class="form-check-input" name="resto_cliente" id="rc-desconto" value="desconto" checked><label class="form-check-label" for="rc-desconto">é arredondamento (fica para você)</label></div>
+            <div class="form-check d-flex gap-2 align-items-center"><input type="radio" class="form-check-input" name="resto_cliente" id="rc-agendar" value="agendar"><label class="form-check-label text-nowrap" for="rc-agendar">ainda devo, pagar em</label><input type="date" name="vencimento_resto_cliente" class="form-control form-control-sm"></div>
+        </div>
     </form>
 </div></div>
-<?php elseif (in_array($pagCliente['situacao'], ['pago', 'agendado'], true) && (!$pagCliente['conta_pagar'] || $pagCliente['situacao'] === 'agendado')): ?>
+<?php elseif ($pagCliente['situacao'] !== 'sem_diferenca' && !($pagCliente['conta_pagar'] && ((float) $pagCliente['conta_pagar']['valor_pago'] > 0 || $pagCliente['conta_pagar']['status'] === 'pago'))): ?>
 <div class="text-end small mb-2 nao-imprimir">
-    <form method="post" class="d-inline" onsubmit="return confirm('<?= $pagCliente['situacao'] === 'pago' ? 'Desfazer o pagamento ao cliente? A saída é estornada da conta e a diferença volta a ficar a pagar.' : 'Desfazer o agendamento? A conta a pagar é excluída.' ?>');">
+    <form method="post" class="d-inline" onsubmit="return confirm('<?= $pagCliente['imediato'] > 0 ? 'Desfazer o pagamento ao cliente? A saída é estornada da conta, o agendamento/arredondamento é desfeito e a diferença volta a ficar a pagar.' : 'Desfazer o agendamento? A conta a pagar é excluída.' ?>');">
         <input type="hidden" name="acao" value="desfazer_pagamento_cliente">
-        <button class="btn btn-link btn-sm p-0 text-muted"><?= $pagCliente['situacao'] === 'pago' ? 'Não foi pago? Desfazer o pagamento ao cliente' : 'Desfazer o agendamento do pagamento ao cliente' ?></button>
+        <button class="btn btn-link btn-sm p-0 text-muted"><?= $pagCliente['imediato'] > 0 ? 'Valor errado ou não foi pago? Desfazer o pagamento ao cliente' : 'Desfazer o agendamento do pagamento ao cliente' ?></button>
     </form>
 </div>
 <?php endif; ?>
@@ -164,17 +171,19 @@ require __DIR__ . '/../../includes/layout_header.php';
         <div class="kpi-rotulo"><?= $op['saldo'] < 0 ? 'Cliente continua devendo' : 'Diferença ao cliente' ?></div>
         <div class="kpi-valor <?= $op['saldo'] < 0 ? 'valor-negativo' : '' ?>"><?= formatMoney(abs($op['saldo'])) ?></div>
         <div class="small text-muted">
-            <?php if ($pagCliente['situacao'] === 'pago' && !$pagCliente['conta_pagar']): ?><span class="badge text-bg-success">Pago</span> em <?= formatDate($pagCliente['data']) ?> de <?= e($op['conta_pagamento_nome']) ?>
-            <?php elseif ($pagCliente['situacao'] === 'pago'): ?><span class="badge text-bg-success">Pago</span> em <?= formatDate($pagCliente['data']) ?> · <a href="/pagar/baixar.php?id=<?= (int) $pagCliente['conta_pagar']['id'] ?>">conta a pagar #<?= (int) $pagCliente['conta_pagar']['id'] ?></a>
-            <?php elseif ($pagCliente['situacao'] === 'agendado' || $pagCliente['situacao'] === 'parcial'): ?>
-                <?= badgeStatus(statusTelaPagar($pagCliente['conta_pagar'])) ?> <?= $pagCliente['situacao'] === 'parcial' ? 'pago ' . formatMoney($pagCliente['pago']) . ' · ' : '' ?>agendado para <?= formatDate($pagCliente['data']) ?>
-                <div class="mt-1 nao-imprimir"><a href="/pagar/baixar.php?id=<?= (int) $pagCliente['conta_pagar']['id'] ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-cash-coin"></i> Pagar agora</a></div>
-            <?php elseif ($pagCliente['situacao'] === 'nao_lancado'): ?><span class="badge text-bg-warning">A pagar</span> pagamento não lançado
+            <?php if ($pagCliente['imediato'] > 0): ?><div><span class="badge text-bg-success">Pago</span> <?= formatMoney($pagCliente['imediato']) ?> em <?= formatDate($pagCliente['data_imediato']) ?> de <?= e($op['conta_pagamento_nome']) ?></div><?php endif; ?>
+            <?php if ($pagCliente['desconto'] > 0): ?><div>Arredondamento <?= formatMoney($pagCliente['desconto']) ?> (ficou para você)</div><?php endif; ?>
+            <?php if ($cp = $pagCliente['conta_pagar']): ?>
+                <div><?php if ($cp['status'] === 'pago'): ?><span class="badge text-bg-success">Pago</span> <?= formatMoney($cp['valor_pago']) ?> em <?= formatDate($cp['data_pagamento']) ?> · <a href="/pagar/baixar.php?id=<?= (int) $cp['id'] ?>">conta a pagar #<?= (int) $cp['id'] ?></a>
+                <?php else: ?><?= badgeStatus(statusTelaPagar($cp)) ?> <?= formatMoney($pagCliente['falta']) ?> agendado para <?= formatDate($cp['data_vencimento']) ?>
+                    <div class="mt-1 nao-imprimir"><a href="/pagar/baixar.php?id=<?= (int) $cp['id'] ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-cash-coin"></i> Pagar agora</a></div><?php endif; ?></div>
+            <?php endif; ?>
+            <?php if ($pagCliente['situacao'] === 'nao_lancado'): ?><span class="badge text-bg-warning">A pagar</span> pagamento não lançado
             <?php elseif ($sobra): ?>Ficou como saldo devedor (repasse em aberto)
             <?php elseif ($residual): ?><a href="/receber/baixar.php?id=<?= (int) $residual['id'] ?>">Conta a receber</a> vencendo <?= formatDate($residual['data_vencimento']) ?> · <?= badgeStatus(statusTelaReceber($residual)) ?><?php endif; ?>
         </div>
     </div></div></div>
-    <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body"><div class="kpi-rotulo">Lucro da operação</div><div class="kpi-valor valor-positivo"><?= formatMoney($op['total_juros'] + $op['juros_emprestimo']) ?></div><div class="small text-muted">Recebido até agora: <?= formatMoney($recebido) ?></div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body"><div class="kpi-rotulo">Lucro da operação</div><div class="kpi-valor valor-positivo"><?= formatMoney($op['total_juros'] + $op['juros_emprestimo'] + $op['desconto_pagamento']) ?></div><?= $op['desconto_pagamento'] > 0 ? '<div class="small text-muted">inclui arredondamento ' . formatMoney($op['desconto_pagamento']) . '</div>' : '' ?><div class="small text-muted">Recebido até agora: <?= formatMoney($recebido) ?></div></div></div></div>
 </div>
 
 <div class="secao">

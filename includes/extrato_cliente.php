@@ -6,6 +6,7 @@
 //   + título dele devolvido para ele (virou repasse)        débito
 //   + correção dos repasses usados numa operação            débito
 //   + diferença paga a ele na operação                      débito
+//   + arredondamento (parte da diferença que não paguei)    débito
 //   − títulos entregues na operação (valor líquido)         crédito
 //   − residual da operação recebido                         crédito
 // O "saldo devedor" de operação (repasse sem saída de conta) e o residual
@@ -43,6 +44,10 @@ function lancamentosExtratoCliente(PDO $pdo, int $clienteId, string $ate): array
         }
         $l[] = ['data' => $o['data_base'], 'ordem' => 3, 'debito' => 0.0, 'credito' => (float) $o['total_liquido'],
             'historico' => 'Operação #' . $o['id'] . ' · ' . $n . ' título(s) entregue(s): ' . formatMoney($o['total_bruto']) . ' − juros ' . formatMoney($o['total_juros'])];
+        if ($o['desconto_pagamento'] > 0) {
+            $l[] = ['data' => $o['data_base'], 'ordem' => 4, 'debito' => (float) $o['desconto_pagamento'], 'credito' => 0.0,
+                'historico' => 'Operação #' . $o['id'] . ' · arredondamento no pagamento da diferença'];
+        }
     }
 
     // Diferença paga a ele: na hora (saída da operação) ou depois, pela conta a pagar agendada.

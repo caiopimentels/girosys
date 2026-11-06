@@ -7,6 +7,7 @@ $situacao = $_GET['situacao'] ?? 'abertos';
 $busca = trim($_GET['busca'] ?? '');
 $contaId = idOuNull($_GET['conta'] ?? null);
 $tipo = $_GET['tipo'] ?? '';
+$boleto = in_array($_GET['boleto'] ?? '', ['a_registrar', 'registrados'], true) ? $_GET['boleto'] : '';
 [$de, $ate] = periodoFiltro();
 
 $where = ['1=1'];
@@ -32,6 +33,11 @@ if ($contaId) {
 if ($tipo !== '' && array_key_exists($tipo, tiposTitulo(true))) {
     $where[] = 'r.tipo = ?';
     $params[] = $tipo;
+}
+if ($boleto === 'a_registrar') {
+    $where[] = sqlBoletoARegistrar($pdo);
+} elseif ($boleto === 'registrados') {
+    $where[] = "(r.boleto_nosso_numero IS NOT NULL OR (r.boleto_codigo IS NOT NULL AND r.boleto_situacao NOT IN ('CANCELADO', 'EXPIRADO')))";
 }
 $campoData = $situacao === 'recebidos' ? 'r.data_recebimento' : 'r.data_vencimento';
 if ($de) {
@@ -77,6 +83,12 @@ $informacoes = [
 ];
 $somasSelecao = ['valor' => 'Valor', 'atualizado' => 'Atualizado hoje'];
 $acoesLaterais = [['Receber selecionados', 'bi-check2-all', 'abrirBaixaLote()'], ['Renegociar selecionados', 'bi-arrow-left-right', 'renegociarSelecionados()']];
+// Boleto: só para quem pode emitir e se algum tipo registra boleto (Cadastros › Tipos de recebimento).
+$podeBoleto = usuarioTemPermissao('emitir_boleto') && tiposComBoleto($pdo);
+if ($podeBoleto) {
+    $acoesLaterais[] = ['Registrar boleto dos selecionados', 'bi-upc-scan', 'abrirRegistroBoletos()'];
+}
+$contasBoleto = $podeBoleto ? contasInter($pdo) : [];
 
 // Planilha (CSV para o Excel) com tudo o que está filtrado na tela.
 if (isset($_GET['csv'])) {
@@ -187,6 +199,9 @@ require __DIR__ . '/../../includes/layout_header.php';
             <?php foreach (tiposTitulo(true) as $k => $v): ?><option value="<?= $k ?>" <?= $tipo === $k ? 'selected' : '' ?>><?= $v ?></option><?php endforeach; ?>
         </select>
         <select name="conta" class="form-select form-select-sm" style="width: 170px;"><?= opcoesContas($pdo, $contaId, 'Todas as contas') ?></select>
+        <select name="boleto" class="form-select form-select-sm" style="width: 160px;" title="Boleto no banco">
+            <?php foreach (['' => 'Boleto: todos', 'a_registrar' => 'Boleto a registrar', 'registrados' => 'Boleto registrado'] as $k => $v): ?><option value="<?= $k ?>" <?= $boleto === $k ? 'selected' : '' ?>><?= $v ?></option><?php endforeach; ?>
+        </select>
         <input type="text" name="busca" class="form-control form-control-sm" placeholder="Pagador, cliente ou nº" value="<?= e($busca) ?>" style="width: 200px;">
         <?php $dataInicio = $de; $dataFim = $ate; $periodoRotulo = $situacao === 'recebidos' ? 'Recebido' : 'Vencimento'; require __DIR__ . '/../../includes/filtro_periodo.php'; ?>
         <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
@@ -208,7 +223,8 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <td><input type="checkbox" class="form-check-input selecao-item" value="<?= (int) $t['id'] ?>"
                         data-valor="<?= e((string) ($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor'])) ?>"
                         data-atualizado="<?= e((string) ($t['status'] === 'recebido' ? $t['valor_recebido'] : $atualizacoes[$t['id']]['total'])) ?>"
-                        data-aberto="<?= in_array($t['status'], ['pendente', 'devolvido'], true) ? 1 : 0 ?>"></td>
+                        data-aberto="<?= in_array($t['status'], ['pendente', 'devolvido'], true) ? 1 : 0 ?>"
+                        data-boleto="<?= $podeBoleto && !motivoNaoRegistrarBoleto($pdo, $t) ? 1 : 0 ?>"></td>
                     <td class="text-num <?= statusTelaReceber($t) === 'vencido' ? 'valor-negativo fw-semibold' : '' ?>"><?= formatDate($t['data_vencimento']) ?></td>
                     <?php $at = $atualizacoes[$t['id']]; $pagador = $t['emitente_nome'] ?? $t['descricao'] ?? '-'; ?>
                     <td><?= e(tipoTituloLabel($t['tipo'])) ?><?php if ($t['boleto_codigo'] && !in_array($t['boleto_situacao'], ['CANCELADO', 'EXPIRADO'], true)): ?> <i class="bi bi-upc-scan text-muted" title="Boleto Inter: <?= e(rotuloSituacaoBoleto($t['boleto_situacao'])) ?>"></i><?php endif; ?><div class="small text-muted text-truncate" style="max-width: 150px;"><?= e($t['conta_nome'] ?? '—') ?></div></td>
@@ -221,7 +237,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                         </div>
                         <div class="small text-muted text-truncate" style="max-width: 300px;"><?= $t['cliente_nome'] ? e($t['cliente_nome']) : '-' ?></div>
                     </td>
-                    <td><?= e($t['numero_titulo']) ?: '-' ?></td>
+                    <td><?= e($t['numero_titulo']) ?: ($t['boleto_nosso_numero'] ? '' : '-') ?><?php if ($t['boleto_nosso_numero'] && $t['boleto_nosso_numero'] !== $t['numero_titulo']): ?><div class="small text-muted" title="Nosso número do boleto">nosso nº <?= e($t['boleto_nosso_numero']) ?></div><?php endif; ?></td>
                     <td class="text-end text-num">
                         <?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?>
                         <?php if ($at['dias'] > 0 && $at['total'] > $t['valor']): ?><div class="small valor-negativo fw-semibold"><?= formatMoney($at['total']) ?></div><?php endif; ?>
@@ -235,9 +251,12 @@ require __DIR__ . '/../../includes/layout_header.php';
                             'renegociado' => 'Renegociado: desfaça a renegociação antes',
                             default => 'Já voltou devolvido: fica no histórico do pagador',
                         },
-                        in_array($t['status'], ['pendente', 'devolvido'], true)
+                        ($podeBoleto && !motivoNaoRegistrarBoleto($pdo, $t)
+                            ? '<button type="button" class="btn btn-sm btn-outline-primary" title="Registrar boleto no banco" onclick="registrarBoletos([' . (int) $t['id'] . '])"><i class="bi bi-upc-scan"></i></button> '
+                            : '')
+                        . (in_array($t['status'], ['pendente', 'devolvido'], true)
                             ? '<button type="button" class="btn btn-sm btn-outline-success" title="Receber" onclick="abrirDetalhe(\'/receber/baixar.php?id=' . (int) $t['id'] . '\')"><i class="bi bi-check2-circle"></i></button> '
-                            : '') ?>
+                            : '')) ?>
                 </tr>
             <?php endforeach; ?>
             </tbody>
@@ -270,7 +289,54 @@ require __DIR__ . '/../../includes/layout_header.php';
         </form>
     </div>
 </div>
+<form method="post" action="/receber/registrar_boletos.php" id="form-boletos" class="d-none">
+    <input type="hidden" name="voltar" value="<?= e($_SERVER['REQUEST_URI'] ?? '/receber/listar.php') ?>">
+    <input type="hidden" name="conta_id" id="boletos-conta">
+    <div id="boletos-ids"></div>
+</form>
+<div class="modal fade" id="modal-boletos" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Registrar boleto no banco</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="alert alert-light border small" id="boletos-resumo"></div>
+                <?php if (!$contasBoleto): ?>
+                    <div class="alert alert-warning small mb-0">Nenhuma conta do Inter está pronta para emitir boleto. Configure em Configurações › Contas bancárias › API do banco.</div>
+                <?php else: ?>
+                    <label class="form-label">Registrar na conta</label>
+                    <select class="form-select" id="boletos-conta-escolha">
+                        <option value=""><?= count($contasBoleto) === 1 ? e($contasBoleto[0]['nome']) : 'A conta de cada título' ?></option>
+                        <?php if (count($contasBoleto) > 1): foreach ($contasBoleto as $cb): ?><option value="<?= (int) $cb['id'] ?>"><?= e($cb['nome']) ?></option><?php endforeach; endif; ?>
+                    </select>
+                    <div class="form-text">Os que já têm boleto (ou nosso número digitado) e os de tipo que não registra boleto, como cheque, ficam como estão. Multa e juros do boleto saem da regra do tipo.</div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <?php if ($contasBoleto): ?><button type="button" class="btn btn-brand" id="boletos-confirmar"><i class="bi bi-upc-scan"></i> Registrar</button><?php endif; ?></div>
+        </div>
+    </div>
+</div>
 <script>
+// Registrar boleto: um (botão da linha) ou os marcados que precisam de boleto.
+function registrarBoletos(ids) {
+    const linhas = ids.length === 1 ? 'o boleto deste título' : ids.length + ' boleto(s)';
+    document.getElementById('boletos-resumo').innerHTML = 'Registrar <strong>' + linhas + '</strong> no banco. O pagador recebe o boleto com Pix.';
+    document.getElementById('boletos-ids').innerHTML = ids.map((id) => '<input type="hidden" name="ids[]" value="' + id + '">').join('');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-boletos')).show();
+}
+function abrirRegistroBoletos() {
+    const marcados = [...document.querySelectorAll('.selecao-item:checked')];
+    const validos = marcados.filter((c) => c.dataset.boleto === '1').map((c) => c.value);
+    if (!validos.length) { alert(marcados.length ? 'Nenhum dos marcados precisa de boleto (já têm boleto/nosso número, não estão em aberto ou o tipo não registra boleto).' : 'Marque na lista os títulos para registrar o boleto. Dica: filtre por "Boleto a registrar".'); return; }
+    if (validos.length > 50) { alert('Marque no máximo 50 por vez.'); return; }
+    registrarBoletos(validos);
+}
+document.getElementById('boletos-confirmar')?.addEventListener('click', (ev) => {
+    ev.target.disabled = true;
+    ev.target.innerHTML = 'Registrando...';
+    document.getElementById('boletos-conta').value = document.getElementById('boletos-conta-escolha')?.value || '';
+    document.getElementById('form-boletos').submit();
+});
 // Baixa em lote: só os marcados que ainda estão em aberto (pendentes/devolvidos).
 function abrirBaixaLote() {
     const marcados = [...document.querySelectorAll('.selecao-item:checked')].filter((c) => c.dataset.aberto === '1');

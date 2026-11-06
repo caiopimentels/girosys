@@ -556,3 +556,16 @@ ALTER TABLE contas_pagar
 -- Relatório de rentabilidade (quanto ganhei: deságio, juros dos repasses, juros/multa por atraso).
 INSERT IGNORE INTO permissoes (chave, descricao, grupo, ordem) VALUES
 ('rentabilidade', 'Relatório de rentabilidade (quanto ganhei)', 'Relatórios', 50);
+
+-- migracao_2026_11_05_arredondamento_cliente.sql
+-- Pagamento ao cliente menor que a diferença (ex.: 4.027,05 → paguei 4.000,00):
+-- o que faltou fica como arredondamento (ganho meu) ou agendado como conta a pagar.
+ALTER TABLE operacoes
+    ADD COLUMN desconto_pagamento DECIMAL(14,2) NOT NULL DEFAULT 0 COMMENT 'parte da diferença que não foi paga ao cliente (arredondamento)' AFTER valor_pago_cliente;
+
+-- migracao_2026_11_05_tipo_gera_boleto.sql
+-- Tipos de recebimento que são cobrados por boleto registrado no banco
+-- (cheque, depósito... não registram). Usado no "Registrar boleto" do contas a receber.
+ALTER TABLE tipos_recebimento
+    ADD COLUMN gera_boleto TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'registra boleto no banco' AFTER juros_mes;
+UPDATE tipos_recebimento SET gera_boleto = 1 WHERE tipo = 'boleto';

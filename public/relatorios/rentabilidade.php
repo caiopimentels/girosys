@@ -41,7 +41,7 @@ require __DIR__ . '/../../includes/layout_header.php';
     <div class="col-12 col-lg-4"><div class="card h-100 border-success"><div class="card-body">
         <div class="kpi-rotulo">Ganho total no período</div>
         <div class="kpi-valor valor-positivo"><?= formatMoney($totais['total']) ?></div>
-        <div class="small text-muted"><?= (int) $totais['operacoes'] ?> operação(ões) · <?= formatMoney($totais['bruto']) ?> em títulos descontados<?= $totais['liquido'] > 0 ? ' · ' . $pct($totais['desagio'] + $totais['repasses'], $totais['liquido']) . ' sobre o líquido pago' : '' ?></div>
+        <div class="small text-muted"><?= (int) $totais['operacoes'] ?> operação(ões) · <?= formatMoney($totais['bruto']) ?> em títulos descontados<?= $totais['liquido'] > 0 ? ' · ' . $pct($totais['desagio'] + $totais['repasses'], $totais['liquido']) . ' sobre o líquido pago' : '' ?><?= $totais['arredondamento'] > 0 ? '<br>inclui ' . formatMoney($totais['arredondamento']) . ' de arredondamentos no pagamento a clientes' : '' ?></div>
     </div></div></div>
     <div class="col-6 col-lg-2"><div class="card h-100"><div class="card-body">
         <div class="kpi-rotulo">Deságio</div>

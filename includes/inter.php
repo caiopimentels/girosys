@@ -788,3 +788,78 @@ function testarApiInter(PDO $pdo, array $conta): array
     $passos[] = ['Emissão (escrita)', null, 'Só dá para confirmar emitindo um boleto. Se der "403" ao emitir, falta a permissão de escrita (boleto-cobranca.write) na integração.'];
     return $passos;
 }
+
+// ---------------------------------------------------------------
+// Registrar boletos a partir do contas a receber (um ou vários)
+// ---------------------------------------------------------------
+
+/**
+ * Título que ainda precisa de boleto: em aberto, de tipo que registra
+ * boleto, sem boleto ativo e sem nosso número (já emitido fora do sistema).
+ */
+function sqlBoletoARegistrar(PDO $pdo, string $a = 'r'): string
+{
+    $tipos = tiposComBoleto($pdo);
+    if (!$tipos) {
+        return '0 = 1';
+    }
+    return "{$a}.status IN ('pendente', 'devolvido') AND {$a}.tipo IN (" . implode(', ', array_map([$pdo, 'quote'], $tipos)) . ")
+        AND (({$a}.boleto_codigo IS NULL AND {$a}.boleto_nosso_numero IS NULL) OR {$a}.boleto_situacao IN ('CANCELADO', 'EXPIRADO'))";
+}
+
+/** Por que este título não registra boleto agora (null = pode registrar). */
+function motivoNaoRegistrarBoleto(PDO $pdo, array $t): ?string
+{
+    return match (true) {
+        !in_array($t['status'], ['pendente', 'devolvido'], true) => 'não está em aberto',
+        !in_array($t['tipo'], tiposComBoleto($pdo), true) => 'o tipo ' . tipoTituloLabel($t['tipo']) . ' não registra boleto',
+        $t['boleto_codigo'] && !in_array($t['boleto_situacao'], ['CANCELADO', 'EXPIRADO'], true) => 'já tem boleto registrado',
+        !$t['boleto_codigo'] && (bool) $t['boleto_nosso_numero'] => 'já tem nosso número (boleto emitido fora do sistema)',
+        default => null,
+    };
+}
+
+/**
+ * Registra o boleto de cada título no Inter. Conta: a escolhida ou, sem
+ * escolha, a conta do título (se for do Inter) ou a única conta do Inter.
+ * Devolve [registrados[], pulados[], falhas[]] — cada um "#id pagador: motivo".
+ */
+function registrarBoletosLote(PDO $pdo, array $ids, ?int $contaId = null): array
+{
+    $contas = array_column(contasInter($pdo), null, 'id');
+    if (!$contas) {
+        throw new InvalidArgumentException('Nenhuma conta do Inter está pronta para emitir boleto (Configurações › Contas bancárias › API do banco).');
+    }
+    if ($contaId && !isset($contas[$contaId])) {
+        throw new InvalidArgumentException('A conta escolhida não está pronta para emitir boleto no Inter.');
+    }
+    $buscar = $pdo->prepare('SELECT r.*, e.nome AS emitente_nome, cl.taxa_padrao AS cliente_taxa FROM contas_receber r
+        LEFT JOIN pessoas e ON e.id = r.emitente_id LEFT JOIN pessoas cl ON cl.id = r.cliente_id WHERE r.id = ?');
+    $registrados = $pulados = $falhas = [];
+    foreach ($ids as $id) {
+        $buscar->execute([(int) $id]);
+        $t = $buscar->fetch();
+        if (!$t) {
+            continue;
+        }
+        $rotulo = '#' . $t['id'] . ' ' . ($t['emitente_nome'] ?? 'sem pagador') . ' ' . formatMoney($t['valor']);
+        if ($motivo = motivoNaoRegistrarBoleto($pdo, $t)) {
+            $pulados[] = $rotulo . ': ' . $motivo;
+            continue;
+        }
+        $conta = $contaId ? $contas[$contaId] : ($contas[(int) $t['conta_destino_id']] ?? (count($contas) === 1 ? reset($contas) : null));
+        if (!$conta) {
+            $falhas[] = $rotulo . ': escolha em qual conta do Inter registrar';
+            continue;
+        }
+        try {
+            emitirBoletoInter($pdo, $t, $conta);
+            registrarAtividade('boletos', 'emissao_boleto', 'Boleto emitido no ' . $conta['nome'] . ' (registro em lote) para o título ' . $rotulo . ', vence ' . formatDate($t['data_vencimento']));
+            $registrados[] = $rotulo;
+        } catch (Throwable $e) {
+            $falhas[] = $rotulo . ': ' . $e->getMessage();
+        }
+    }
+    return [$registrados, $pulados, $falhas];
+}
+

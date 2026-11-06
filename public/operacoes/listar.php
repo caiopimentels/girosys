@@ -74,7 +74,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <td class="text-end text-num"><?= formatMoney($o['total_liquido']) ?></td>
                     <td class="text-end text-num"><?= formatMoney($o['emprestado_atualizado']) ?></td>
                     <td class="text-end text-num <?= $o['saldo'] < 0 ? 'valor-negativo' : '' ?>"><?= formatMoney($o['saldo']) ?>
-                        <?php if ($o['saldo'] > 0 && !($o['valor_pago_cliente'] > 0) && $o['pagamento_agendado'] !== 'pago'): ?>
+                        <?php if ($o['saldo'] > 0 && ($o['pagamento_agendado'] === 'pendente' || (!$o['pagamento_agendado'] && !($o['valor_pago_cliente'] > 0) && !($o['desconto_pagamento'] > 0)))): ?>
                             <div><span class="badge text-bg-warning" title="Diferença ainda não paga ao cliente"><?= $o['pagamento_agendado'] ? 'agendado ' . formatDate($o['pagamento_agendado_para']) : 'a pagar' ?></span></div>
                         <?php endif; ?></td>
                     <td class="text-end text-num valor-positivo"><?= formatMoney($o['total_juros'] + $o['juros_emprestimo']) ?></td>
