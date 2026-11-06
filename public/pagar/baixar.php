@@ -46,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ['descricao' => input('descricao') ?: $conta['descricao'], 'valor' => formatMoney(decimalInput('valor') ?: $conta['valor']), 'vencimento' => formatDate($venc), 'categoria' => idOuNull($_POST['categoria_id'] ?? null), 'conta' => idOuNull($_POST['conta_id'] ?? null), 'observacao' => input('observacao') ?: null],
                 ['descricao' => 'Descrição', 'valor' => 'Valor', 'vencimento' => 'Vencimento', 'categoria' => 'Categoria (id)', 'conta' => 'Conta (id)', 'observacao' => 'Observação']));
             flash('success', 'Conta alterada.');
+        } elseif ($acao === 'excluir' && $conta['operacao_id']) {
+            throw new InvalidArgumentException('Esta conta é o pagamento agendado da operação #' . $conta['operacao_id'] . ': desfaça pela tela da operação.');
         } elseif ($acao === 'excluir' && !(float) $conta['valor_pago']) {
             $pdo->prepare('DELETE FROM contas_pagar WHERE id = ?')->execute([$id]);
             registrarAtividade('contas_pagar', 'exclusao', 'Excluída a ' . $rotuloConta);
@@ -77,7 +79,7 @@ require __DIR__ . '/../../includes/layout_header.php';
     <?php // Em cima: o que é a conta. ?>
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
         <?= badgeStatus($status) ?>
-        <span class="text-muted small"><?= e($conta['categoria_nome'] ?? 'Sem categoria') ?><?= $conta['pessoa_nome'] ? ' · ' . e($conta['pessoa_nome']) : '' ?></span>
+        <span class="text-muted small"><?= e($conta['categoria_nome'] ?? 'Sem categoria') ?><?= $conta['pessoa_nome'] ? ' · ' . e($conta['pessoa_nome']) : '' ?><?= $conta['operacao_id'] ? ' · <a href="/operacoes/ver.php?id=' . (int) $conta['operacao_id'] . '">diferença da operação #' . (int) $conta['operacao_id'] . '</a>' : '' ?></span>
         <span class="ms-auto d-flex gap-2">
             <?php if ($conta['status'] === 'pendente'): ?>
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="const d = document.getElementById('editar-conta'); d.open = !d.open; d.scrollIntoView({block: 'nearest'});"><i class="bi bi-pencil"></i> Editar</button>

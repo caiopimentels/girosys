@@ -203,6 +203,10 @@
     campoCliente.addEventListener('change', consultarCliente);
     campoTaxa.addEventListener('input', () => { taxaDigitada = true; $('#taxa-origem').textContent = 'Taxa só desta operação'; recalcular(); });
     ['#data_base', '#dias_compensacao'].forEach((s) => $(s).addEventListener('input', recalcular));
+    // "Pago em" acompanha a data base até ser mexido.
+    let dataPagamentoMexida = $('#data_pagamento_cliente').value !== $('#data_base').value;
+    $('#data_pagamento_cliente').addEventListener('input', () => { dataPagamentoMexida = true; });
+    $('#data_base').addEventListener('input', () => { if (!dataPagamentoMexida && !$('#pagamento-agendado').checked) $('#data_pagamento_cliente').value = $('#data_base').value; });
 
     // ---------------- Valores já passados (adiantamentos) ----------------
     // Lista todos os em aberto do cliente; só os marcados vão no formulário
@@ -343,8 +347,11 @@
             $('#r-saldo-ajuda').textContent = 'Desconto direto: o cliente recebe o líquido.';
         }
         $('#bloco-pagar').style.display = saldo > 0 ? '' : 'none';
-        $('#conta_pagamento_id').disabled = !$('#pagar_diferenca').checked;
-        $('#conta_pagamento_id').required = saldo > 0 && $('#pagar_diferenca').checked;
+        const agendado = $('#pagamento-agendado').checked;
+        $('#rotulo-data-pagamento').textContent = agendado ? 'Pagar em (data prevista)' : 'Pago em';
+        $('#data_pagamento_cliente').required = saldo > 0 && agendado;
+        $('#conta_pagamento_id').required = saldo > 0 && !agendado;
+        $('#conta_pagamento_id').options[0].textContent = agendado ? 'Sai de qual conta? (opcional)' : 'Sai de qual conta?';
         $('#bloco-residual').style.display = saldo < 0 ? '' : 'none';
         $('#residual_vencimento').disabled = !$('#residual-receber').checked;
 
@@ -361,7 +368,7 @@
             limite.innerHTML = '';
         }
     }
-    $('#pagar_diferenca').addEventListener('change', recalcular);
+    document.querySelectorAll('[name="pagamento_cliente"]').forEach((r) => r.addEventListener('change', recalcular));
     document.querySelectorAll('[name="residual_modo"]').forEach((r) => r.addEventListener('change', recalcular));
     $('#btn-add-titulo').addEventListener('click', () => campo(adicionarTitulo(), 'vencimento').focus());
 

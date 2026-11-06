@@ -14,7 +14,8 @@ $estado = [
     'dias_compensacao' => '0',
     'conta_padrao_id' => '',
     'observacao' => '',
-    'pagar_diferenca' => true,
+    'pagamento_cliente' => 'pago',
+    'data_pagamento_cliente' => date('Y-m-d'),
     'conta_pagamento_id' => '',
     'residual_modo' => 'receber',
     'residual_vencimento' => date('Y-m-d', strtotime('+30 days')),
@@ -59,7 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'dias_compensacao' => input('dias_compensacao', '0'),
         'conta_padrao_id' => input('conta_padrao_id'),
         'observacao' => input('observacao'),
-        'pagar_diferenca' => isset($_POST['pagar_diferenca']),
+        'pagamento_cliente' => input('pagamento_cliente') === 'agendado' ? 'agendado' : 'pago',
+        'data_pagamento_cliente' => dataInput('data_pagamento_cliente') ?? '',
         'conta_pagamento_id' => input('conta_pagamento_id'),
         'residual_modo' => input('residual_modo') === 'adiantamento' ? 'adiantamento' : 'receber',
         'residual_vencimento' => dataInput('residual_vencimento') ?? '',
@@ -88,12 +90,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'observacao' => $estado['observacao'],
             'titulos' => $titulos,
             'adiantamentos' => $adiantamentos,
-            'pagar_diferenca' => $estado['pagar_diferenca'],
+            'pagamento_cliente' => $estado['pagamento_cliente'],
+            'data_pagamento_cliente' => $estado['data_pagamento_cliente'],
             'conta_pagamento_id' => $estado['conta_pagamento_id'],
             'residual_modo' => $estado['residual_modo'],
             'residual_vencimento' => $estado['residual_vencimento'],
         ]);
-        registrarAtividade('operacoes', 'criacao', 'Gravada a ' . resumoOperacaoAuditoria($pdo, $operacaoId) . ($estado['pagar_diferenca'] ? ' · diferença paga ao cliente' : ''));
+        registrarAtividade('operacoes', 'criacao', 'Gravada a ' . resumoOperacaoAuditoria($pdo, $operacaoId) . descricaoPagamentoClienteAuditoria($pdo, $operacaoId));
         flash('success', 'Operação #' . $operacaoId . ' gravada. Os títulos já estão em Contas a receber.');
         redirect('/operacoes/ver.php?id=' . $operacaoId);
     } catch (InvalidArgumentException $e) {
@@ -255,10 +258,17 @@ require __DIR__ . '/../../includes/layout_header.php';
                 </div>
 
                 <div id="bloco-pagar" class="mt-3">
+                    <div class="small fw-semibold mb-1">O cliente:</div>
                     <div class="form-check">
-                        <input type="checkbox" class="form-check-input" name="pagar_diferenca" id="pagar_diferenca" <?= $estado['pagar_diferenca'] ? 'checked' : '' ?>>
-                        <label class="form-check-label small" for="pagar_diferenca">Lançar a saída deste valor agora</label>
+                        <input type="radio" class="form-check-input" name="pagamento_cliente" id="pagamento-pago" value="pago" <?= $estado['pagamento_cliente'] === 'pago' ? 'checked' : '' ?>>
+                        <label class="form-check-label small" for="pagamento-pago">Já foi pago (sai da conta agora)</label>
                     </div>
+                    <div class="form-check">
+                        <input type="radio" class="form-check-input" name="pagamento_cliente" id="pagamento-agendado" value="agendado" <?= $estado['pagamento_cliente'] === 'agendado' ? 'checked' : '' ?>>
+                        <label class="form-check-label small" for="pagamento-agendado">Agendar para pagar depois (vira conta a pagar)</label>
+                    </div>
+                    <label class="form-label small mt-2 mb-0" for="data_pagamento_cliente" id="rotulo-data-pagamento">Pago em</label>
+                    <input type="date" name="data_pagamento_cliente" id="data_pagamento_cliente" class="form-control form-control-sm" value="<?= e($estado['data_pagamento_cliente']) ?>">
                     <select name="conta_pagamento_id" id="conta_pagamento_id" class="form-select form-select-sm mt-2"><?= opcoesContas($pdo, idOuNull($estado['conta_pagamento_id']), 'Sai de qual conta?') ?></select>
                 </div>
 

@@ -43,10 +43,19 @@ function lancamentosExtratoCliente(PDO $pdo, int $clienteId, string $ate): array
         }
         $l[] = ['data' => $o['data_base'], 'ordem' => 3, 'debito' => 0.0, 'credito' => (float) $o['total_liquido'],
             'historico' => 'Operação #' . $o['id'] . ' · ' . $n . ' título(s) entregue(s): ' . formatMoney($o['total_bruto']) . ' − juros ' . formatMoney($o['total_juros'])];
-        if ($o['valor_pago_cliente'] > 0) {
-            $l[] = ['data' => $o['data_base'], 'ordem' => 4, 'debito' => (float) $o['valor_pago_cliente'], 'credito' => 0.0,
-                'historico' => 'Operação #' . $o['id'] . ' · diferença paga a você'];
-        }
+    }
+
+    // Diferença paga a ele: na hora (saída da operação) ou depois, pela conta a pagar agendada.
+    $stmt = $pdo->prepare(
+        "SELECT m.data, m.valor, o.id AS operacao_id, cp.id AS conta_pagar_id FROM movimentacoes m
+         LEFT JOIN contas_pagar cp ON m.origem = 'pagar' AND cp.id = m.origem_id
+         JOIN operacoes o ON o.id = IF(m.origem = 'operacao', m.origem_id, cp.operacao_id)
+         WHERE o.cliente_id = ? AND m.tipo = 'saida' AND (m.origem = 'operacao' OR cp.operacao_id IS NOT NULL) AND m.data <= ?"
+    );
+    $stmt->execute([$clienteId, $ate]);
+    foreach ($stmt->fetchAll() as $m) {
+        $l[] = ['data' => $m['data'], 'ordem' => 4, 'debito' => (float) $m['valor'], 'credito' => 0.0,
+            'historico' => 'Operação #' . $m['operacao_id'] . ' · diferença paga a você' . ($m['conta_pagar_id'] ? ' (agendada)' : '')];
     }
 
     // Residual (conta a receber da operação) que ele pagou.

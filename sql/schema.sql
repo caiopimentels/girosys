@@ -544,3 +544,15 @@ CREATE TABLE IF NOT EXISTS importacoes_banco (
 UPDATE contas_receber
 SET boleto_nosso_numero = numero_titulo
 WHERE tipo = 'boleto' AND boleto_nosso_numero IS NULL AND numero_titulo REGEXP '^[0-9]{6,}$';
+
+-- migracao_2026_11_05_pagamento_cliente_rentabilidade.sql
+-- Pagamento da diferença ao cliente na operação: pago na hora (saída no
+-- extrato) ou agendado — vira conta a pagar ligada à operação.
+ALTER TABLE contas_pagar
+    ADD COLUMN operacao_id INT NULL AFTER pessoa_id,
+    ADD INDEX (operacao_id),
+    ADD FOREIGN KEY (operacao_id) REFERENCES operacoes(id);
+
+-- Relatório de rentabilidade (quanto ganhei: deságio, juros dos repasses, juros/multa por atraso).
+INSERT IGNORE INTO permissoes (chave, descricao, grupo, ordem) VALUES
+('rentabilidade', 'Relatório de rentabilidade (quanto ganhei)', 'Relatórios', 50);

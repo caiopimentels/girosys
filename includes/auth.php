@@ -98,6 +98,7 @@ function permissaoDaPagina(string $script): ?array
         '/cartoes/' => ['cartoes', 'Você não tem acesso aos cartões de crédito.'],
         '/contas/' => ['contas', 'Você não tem acesso às contas bancárias.'],
         '/pessoas/' => ['pessoas', 'Você não tem acesso aos cadastros de pessoas.'],
+        '/relatorios/' => ['rentabilidade', 'Você não tem acesso aos relatórios.'],
         '/categorias/' => ['cadastros_auxiliares', 'Você não tem acesso aos cadastros auxiliares.'],
         '/configuracoes/recebimento.php' => ['cadastros_auxiliares', 'Você não tem acesso aos cadastros auxiliares.'],
     ];

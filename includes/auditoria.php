@@ -106,6 +106,21 @@ function resumoOperacaoAuditoria(PDO $pdo, int $id): string
         . (int) $o['qtd'] . ' título(s), bruto ' . formatMoney($o['total_bruto']) . ', juros ' . formatMoney($o['total_juros']) . ', líquido ' . formatMoney($o['total_liquido']) . ')';
 }
 
+// " · diferença paga ao cliente em ..." / " · pagamento ao cliente agendado para ..." (auditoria).
+function descricaoPagamentoClienteAuditoria(PDO $pdo, int $id): string
+{
+    $stmt = $pdo->prepare('SELECT * FROM operacoes WHERE id = ?');
+    $stmt->execute([$id]);
+    $o = $stmt->fetch();
+    $p = $o ? pagamentoClienteOperacao($pdo, $o) : ['situacao' => 'sem_diferenca'];
+    return match ($p['situacao']) {
+        'pago' => ' · diferença ' . formatMoney($o['saldo']) . ' paga ao cliente em ' . formatDate($p['data']),
+        'agendado', 'parcial' => ' · pagamento de ' . formatMoney($o['saldo']) . ' ao cliente agendado para ' . formatDate($p['data']) . ' (conta a pagar #' . $p['conta_pagar']['id'] . ')',
+        'nao_lancado' => ' · diferença ' . formatMoney($o['saldo']) . ' ao cliente não lançada',
+        default => '',
+    };
+}
+
 function registrarAtividade(string $modulo, string $operacao, string $descricao): void
 {
     registrarAtividadeUsuario(usuarioAtualId(), usuarioAtualNome(), $modulo, $operacao, $descricao);

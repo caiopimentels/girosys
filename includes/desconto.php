@@ -101,7 +101,8 @@ function registrarAdiantamento(PDO $pdo, int $clienteId, string $data, float $va
  *   cliente_id, data_base, taxa, dias_compensacao, observacao,
  *   titulos[]: tipo, emitente_nome, emitente_documento, banco_titulo, numero_titulo, valor, vencimento, conta_destino_id, observacao
  *   adiantamentos[]: id, valor_usado
- *   pagar_diferenca (bool), conta_pagamento_id
+ *   pagamento_cliente ('pago' | 'agendado'), data_pagamento_cliente, conta_pagamento_id
+ *   (diferença a favor do cliente: paga agora ou agendada como conta a pagar)
  *   residual_modo ('receber' | 'adiantamento'), residual_vencimento — quando os
  *   títulos não cobrem as despesas: vira conta a receber do cliente ou fica
  *   como saldo devedor para puxar na próxima operação.
@@ -167,10 +168,15 @@ function salvarOperacao(PDO $pdo, array $dados): int
         $calc = calcularOperacao($dataBase, $taxa, $diasComp, $titulos, $adiantamentos);
         $tot = $calc['totais'];
 
-        $pagarDiferenca = !empty($dados['pagar_diferenca']) && $tot['saldo'] > 0;
-        $contaPagamento = $pagarDiferenca ? idOuNull($dados['conta_pagamento_id'] ?? null) : null;
+        // Diferença a favor do cliente: paga agora (sai da conta) ou agendada (conta a pagar).
+        $modoPagamento = $tot['saldo'] > 0 ? ($dados['pagamento_cliente'] ?? (!empty($dados['pagar_diferenca']) ? 'pago' : '')) : '';
+        $contaPagamento = $modoPagamento ? idOuNull($dados['conta_pagamento_id'] ?? null) : null;
+        $pagarDiferenca = $modoPagamento === 'pago';
         if ($pagarDiferenca && !$contaPagamento) {
             throw new InvalidArgumentException('Escolha a conta de onde sai o valor pago ao cliente.');
+        }
+        if ($modoPagamento === 'agendado' && empty($dados['data_pagamento_cliente'])) {
+            throw new InvalidArgumentException('Informe a data prevista para pagar o cliente.');
         }
 
         $pdo->prepare(
@@ -180,7 +186,7 @@ function salvarOperacao(PDO $pdo, array $dados): int
         )->execute([
             $clienteId, $dataBase, $taxa, $diasComp, $tot['valor_emprestado'], $tot['juros_emprestimo'], $tot['emprestado_atualizado'],
             $tot['total_bruto'], $tot['total_juros'], $tot['total_liquido'], $tot['saldo'],
-            $pagarDiferenca ? $tot['saldo'] : 0, $contaPagamento, ($dados['observacao'] ?? '') ?: null, usuarioAtualId(),
+            0, null, ($dados['observacao'] ?? '') ?: null, usuarioAtualId(),
         ]);
         $operacaoId = (int) $pdo->lastInsertId();
 
@@ -218,8 +224,8 @@ function salvarOperacao(PDO $pdo, array $dados): int
         $stmt->execute([$clienteId]);
         $nomeCliente = (string) $stmt->fetchColumn();
 
-        if ($pagarDiferenca) {
-            lancarMovimentacao($pdo, $contaPagamento, $dataBase, 'saida', $tot['saldo'], "Operação #{$operacaoId} · pago a {$nomeCliente}", 'operacao', $operacaoId);
+        if ($modoPagamento) {
+            registrarPagamentoCliente($pdo, $operacaoId, $modoPagamento, ($dados['data_pagamento_cliente'] ?? '') ?: $dataBase, $contaPagamento);
         }
 
         // Títulos não cobriram o que foi adiantado: o residual vira conta a
@@ -245,6 +251,75 @@ function salvarOperacao(PDO $pdo, array $dados): int
     }
 }
 
+/**
+ * Diferença da operação a pagar ao cliente. $modo 'pago' = saiu agora da
+ * conta (lança no extrato na $data); 'agendado' = vira conta a pagar ao
+ * cliente vencendo em $data (paga depois em Contas a pagar).
+ */
+function registrarPagamentoCliente(PDO $pdo, int $operacaoId, string $modo, string $data, ?int $contaId): void
+{
+    $stmt = $pdo->prepare('SELECT o.*, p.nome AS cliente_nome FROM operacoes o JOIN pessoas p ON p.id = o.cliente_id WHERE o.id = ?');
+    $stmt->execute([$operacaoId]);
+    $op = $stmt->fetch();
+    $situacao = pagamentoClienteOperacao($pdo, $op);
+    if ($situacao['situacao'] !== 'nao_lancado') {
+        throw new InvalidArgumentException('O pagamento ao cliente desta operação já foi lançado ou agendado.');
+    }
+    $valor = round((float) $op['saldo'], 2);
+    if ($modo === 'pago') {
+        if (!$contaId) {
+            throw new InvalidArgumentException('Escolha a conta de onde sai o valor pago ao cliente.');
+        }
+        lancarMovimentacao($pdo, $contaId, $data, 'saida', $valor, "Operação #{$operacaoId} · pago a {$op['cliente_nome']}", 'operacao', $operacaoId);
+        $pdo->prepare('UPDATE operacoes SET valor_pago_cliente = ?, conta_pagamento_id = ? WHERE id = ?')->execute([$valor, $contaId, $operacaoId]);
+    } elseif ($modo === 'agendado') {
+        $pdo->prepare('INSERT INTO contas_pagar (descricao, pessoa_id, operacao_id, valor, data_vencimento, conta_id, observacao) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            ->execute([mb_substr("Operação #{$operacaoId} · pagar a {$op['cliente_nome']}", 0, 200), $op['cliente_id'], $operacaoId, $valor, $data, $contaId,
+                'Diferença da operação #' . $operacaoId . ' de ' . formatDate($op['data_base']) . ' a pagar ao cliente.']);
+    } else {
+        throw new InvalidArgumentException('Escolha se o cliente já foi pago ou se o pagamento fica agendado.');
+    }
+}
+
+/**
+ * Como está o pagamento da diferença ao cliente:
+ * situacao: sem_diferenca | nao_lancado | pago | agendado | parcial;
+ * conta_pagar (a conta a pagar agendada, se houver), pago (valor), data.
+ */
+function pagamentoClienteOperacao(PDO $pdo, array $op): array
+{
+    if ((float) $op['saldo'] <= 0) {
+        return ['situacao' => 'sem_diferenca', 'conta_pagar' => null, 'pago' => 0.0, 'data' => null];
+    }
+    if ((float) $op['valor_pago_cliente'] > 0) {
+        $stmt = $pdo->prepare("SELECT MAX(data) FROM movimentacoes WHERE origem = 'operacao' AND origem_id = ?");
+        $stmt->execute([$op['id']]);
+        return ['situacao' => 'pago', 'conta_pagar' => null, 'pago' => (float) $op['valor_pago_cliente'], 'data' => $stmt->fetchColumn() ?: $op['data_base']];
+    }
+    $stmt = $pdo->prepare('SELECT cp.*, c.nome AS conta_nome FROM contas_pagar cp LEFT JOIN contas_bancarias c ON c.id = cp.conta_id WHERE cp.operacao_id = ? ORDER BY cp.id DESC LIMIT 1');
+    $stmt->execute([$op['id']]);
+    $cp = $stmt->fetch() ?: null;
+    if (!$cp) {
+        return ['situacao' => 'nao_lancado', 'conta_pagar' => null, 'pago' => 0.0, 'data' => null];
+    }
+    $pago = (float) $cp['valor_pago'];
+    $situacao = $cp['status'] === 'pago' ? 'pago' : ($pago > 0 ? 'parcial' : 'agendado');
+    return ['situacao' => $situacao, 'conta_pagar' => $cp, 'pago' => $pago, 'data' => $cp['status'] === 'pago' ? $cp['data_pagamento'] : $cp['data_vencimento']];
+}
+
+/** Volta o pagamento ao cliente para "não lançado" (foi marcado como pago/agendado por engano). */
+function desfazerPagamentoCliente(PDO $pdo, int $operacaoId): void
+{
+    $stmt = $pdo->prepare('SELECT id FROM contas_pagar WHERE operacao_id = ? AND (valor_pago > 0 OR status = \'pago\')');
+    $stmt->execute([$operacaoId]);
+    if ($cpId = $stmt->fetchColumn()) {
+        throw new InvalidArgumentException('O pagamento agendado (conta a pagar #' . $cpId . ') já tem valor pago: estorne lá em Contas a pagar antes.');
+    }
+    $pdo->prepare('DELETE FROM contas_pagar WHERE operacao_id = ?')->execute([$operacaoId]);
+    removerMovimentacoes($pdo, 'operacao', $operacaoId);
+    $pdo->prepare('UPDATE operacoes SET valor_pago_cliente = 0, conta_pagamento_id = NULL WHERE id = ?')->execute([$operacaoId]);
+}
+
 /** Desfaz a operação inteira — só enquanto nenhum título foi recebido/devolvido. */
 function excluirOperacao(PDO $pdo, int $operacaoId): void
 {
@@ -259,6 +334,11 @@ function excluirOperacao(PDO $pdo, int $operacaoId): void
     if ($sobra && (float) $sobra['valor_utilizado'] > 0) {
         throw new InvalidArgumentException('O saldo devedor desta operação já foi usado em outra operação. Exclua aquela primeiro.');
     }
+    $stmt = $pdo->prepare("SELECT id FROM contas_pagar WHERE operacao_id = ? AND (valor_pago > 0 OR status = 'pago')");
+    $stmt->execute([$operacaoId]);
+    if ($cpId = $stmt->fetchColumn()) {
+        throw new InvalidArgumentException('O pagamento ao cliente desta operação (conta a pagar #' . $cpId . ') já foi pago. Estorne em Contas a pagar antes de excluir.');
+    }
 
     $pdo->beginTransaction();
     try {
@@ -272,6 +352,7 @@ function excluirOperacao(PDO $pdo, int $operacaoId): void
             $pdo->prepare('DELETE FROM adiantamentos WHERE id = ?')->execute([$sobra['id']]);
         }
         removerMovimentacoes($pdo, 'operacao', $operacaoId);
+        $pdo->prepare('DELETE FROM contas_pagar WHERE operacao_id = ?')->execute([$operacaoId]);
         $pdo->prepare('DELETE FROM operacoes WHERE id = ?')->execute([$operacaoId]);
         $pdo->commit();
     } catch (Throwable $e) {
@@ -372,4 +453,14 @@ function editarOperacao(PDO $pdo, int $operacaoId, string $dataBase, float $taxa
         ->execute([round($usado, 2), round($juros, 2), round($usado + $juros, 2), $operacaoId]);
 
     recalcularTotaisOperacao($pdo, $operacaoId);
+
+    // Pagamento ao cliente ainda só agendado (nada pago): acompanha a nova diferença.
+    $stmt = $pdo->prepare('SELECT saldo FROM operacoes WHERE id = ?');
+    $stmt->execute([$operacaoId]);
+    $saldo = round((float) $stmt->fetchColumn(), 2);
+    if ($saldo > 0) {
+        $pdo->prepare("UPDATE contas_pagar SET valor = ? WHERE operacao_id = ? AND status = 'pendente' AND COALESCE(valor_pago, 0) = 0")->execute([$saldo, $operacaoId]);
+    } else {
+        $pdo->prepare("DELETE FROM contas_pagar WHERE operacao_id = ? AND status = 'pendente' AND COALESCE(valor_pago, 0) = 0")->execute([$operacaoId]);
+    }
 }

@@ -45,6 +45,12 @@ $menus = [
             ['Transferência entre contas', '/contas/transferir.php', 'transferir'],
         ],
     ],
+    'relatorios' => [
+        'rotulo' => 'Relatórios',
+        'itens' => [
+            ['Rentabilidade (quanto ganhei)', '/relatorios/rentabilidade.php', 'rentabilidade'],
+        ],
+    ],
     'cadastros' => [
         'rotulo' => 'Cadastros',
         'itens' => [

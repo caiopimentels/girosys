@@ -16,6 +16,8 @@ if ($busca !== '') {
 $stmt = $pdo->prepare(
     "SELECT o.*, p.nome AS cliente_nome,
             (SELECT COUNT(*) FROM contas_receber r WHERE r.operacao_id = o.id) AS qtd_titulos,
+            (SELECT cp.status FROM contas_pagar cp WHERE cp.operacao_id = o.id ORDER BY cp.id DESC LIMIT 1) AS pagamento_agendado,
+            (SELECT cp.data_vencimento FROM contas_pagar cp WHERE cp.operacao_id = o.id ORDER BY cp.id DESC LIMIT 1) AS pagamento_agendado_para,
             (SELECT COUNT(*) FROM contas_receber r WHERE r.operacao_id = o.id AND r.status IN ('pendente', 'devolvido')) AS em_aberto,
             (SELECT COUNT(*) FROM contas_receber r WHERE r.operacao_id = o.id AND (r.status IN ('recebido', 'devolvido') OR r.vezes_devolvido > 0)) AS travados
      FROM operacoes o JOIN pessoas p ON p.id = o.cliente_id
@@ -71,7 +73,10 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <td class="text-end text-num"><?= formatMoney($o['total_bruto']) ?></td>
                     <td class="text-end text-num"><?= formatMoney($o['total_liquido']) ?></td>
                     <td class="text-end text-num"><?= formatMoney($o['emprestado_atualizado']) ?></td>
-                    <td class="text-end text-num <?= $o['saldo'] < 0 ? 'valor-negativo' : '' ?>"><?= formatMoney($o['saldo']) ?></td>
+                    <td class="text-end text-num <?= $o['saldo'] < 0 ? 'valor-negativo' : '' ?>"><?= formatMoney($o['saldo']) ?>
+                        <?php if ($o['saldo'] > 0 && !($o['valor_pago_cliente'] > 0) && $o['pagamento_agendado'] !== 'pago'): ?>
+                            <div><span class="badge text-bg-warning" title="Diferença ainda não paga ao cliente"><?= $o['pagamento_agendado'] ? 'agendado ' . formatDate($o['pagamento_agendado_para']) : 'a pagar' ?></span></div>
+                        <?php endif; ?></td>
                     <td class="text-end text-num valor-positivo"><?= formatMoney($o['total_juros'] + $o['juros_emprestimo']) ?></td>
                     <?= acoesLinha('/operacoes/ver.php?id=' . (int) $o['id'] . '&editar=1', $o['travados'] ? null : '/operacoes/ver.php?id=' . (int) $o['id'],
                         'Excluir a operação #' . (int) $o['id'] . '? Os títulos saem de Contas a receber e os repasses voltam a ficar em aberto.', false,
