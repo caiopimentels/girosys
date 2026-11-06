@@ -106,6 +106,7 @@ function badgeStatus(string $status): string
         'pago', 'paga' => ['text-bg-success', 'Pago'],
         'devolvido' => ['text-bg-danger', 'Devolvido'],
         'cancelado' => ['text-bg-secondary', 'Cancelado'],
+        'renegociado' => ['text-bg-secondary', 'Renegociado'],
         'transferido' => ['text-bg-secondary', 'Devolvido ao cliente'],
         'aberta' => ['text-bg-warning', 'Em aberto'],
         'parcial' => ['text-bg-info', 'Pago em parte'],
@@ -117,6 +118,20 @@ function badgeStatus(string $status): string
 // ---------------------------------------------------------------
 // Baixas de contas a receber e a pagar
 // ---------------------------------------------------------------
+
+/**
+ * Boleto lançado com o nosso número no campo Nº (só dígitos): copia para o
+ * campo próprio, que é por onde a planilha/API do banco acha o título.
+ */
+function copiarNossoNumero(PDO $pdo, array $ids): void
+{
+    $ids = array_values(array_filter(array_map('intval', $ids)));
+    if ($ids) {
+        $pdo->prepare("UPDATE contas_receber SET boleto_nosso_numero = numero_titulo
+            WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ") AND tipo = 'boleto' AND boleto_nosso_numero IS NULL AND numero_titulo REGEXP '^[0-9]{6,}$'")
+            ->execute($ids);
+    }
+}
 
 function baixarReceber(PDO $pdo, array $titulo, string $data, float $valor, int $contaId): void
 {
@@ -322,8 +337,9 @@ function historicoEmitente(PDO $pdo, int $pessoaId): array
     $tolerancia = toleranciaCompensacaoDias();
     $stmt = $pdo->prepare(
         "SELECT
-            COUNT(*) AS total,
-            COALESCE(SUM(valor), 0) AS valor_total,
+            SUM(status <> 'renegociado') AS total,
+            COALESCE(SUM(CASE WHEN status <> 'renegociado' THEN valor END), 0) AS valor_total,
+            SUM(status = 'renegociado') AS renegociados,
             SUM(status = 'recebido' AND vezes_devolvido = 0 AND data_recebimento <= data_vencimento + INTERVAL {$tolerancia} DAY) AS em_dia,
             SUM(status = 'recebido' AND vezes_devolvido = 0 AND data_recebimento > data_vencimento + INTERVAL {$tolerancia} DAY) AS com_atraso,
             SUM(vezes_devolvido > 0) AS devolvidos,
@@ -345,7 +361,7 @@ function historicoEmitente(PDO $pdo, int $pessoaId): array
         $h['classificacao'] = 'sem_historico';
     } elseif ($h['devolvidos_em_aberto'] > 0 || $h['vencidos'] > 0 || ($liquidados > 0 && $h['devolvidos'] / $liquidados > 0.2)) {
         $h['classificacao'] = 'risco';
-    } elseif ($h['devolvidos'] > 0 || $h['com_atraso'] > 0) {
+    } elseif ($h['devolvidos'] > 0 || $h['com_atraso'] > 0 || $h['renegociados'] > 0) {
         $h['classificacao'] = 'atencao';
     } elseif ($liquidados === 0) {
         $h['classificacao'] = 'sem_historico';

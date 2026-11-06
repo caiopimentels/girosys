@@ -673,7 +673,7 @@ function sugerirVinculosInter(PDO $pdo, array $conta, string $de, string $ate): 
     $conhecidos = $pdo->query('SELECT boleto_codigo FROM contas_receber WHERE boleto_codigo IS NOT NULL')->fetchAll(PDO::FETCH_COLUMN);
     $cobrancas = array_values(array_filter($cobrancas, fn ($c) => !in_array($c['codigo'], $conhecidos, true) && !in_array($c['situacao'], ['CANCELADO', 'EXPIRADO'], true)));
 
-    $stmt = $pdo->prepare("SELECT r.id, r.valor, r.data_vencimento, r.descricao, r.numero_titulo, e.nome AS pagador_nome, e.documento AS pagador_documento
+    $stmt = $pdo->prepare("SELECT r.id, r.valor, r.data_vencimento, r.descricao, r.numero_titulo, r.boleto_nosso_numero, e.nome AS pagador_nome, e.documento AS pagador_documento
         FROM contas_receber r LEFT JOIN pessoas e ON e.id = r.emitente_id
         WHERE r.status IN ('pendente', 'devolvido') AND (r.boleto_codigo IS NULL OR r.boleto_situacao IN ('CANCELADO', 'EXPIRADO'))
           AND r.data_vencimento BETWEEN ? AND ? ORDER BY r.data_vencimento, r.id");
@@ -689,7 +689,8 @@ function sugerirVinculosInter(PDO $pdo, array $conta, string $de, string $ate): 
                 continue;
             }
             $pontos = 0;
-            if ($t['numero_titulo'] && $c['nosso_numero'] && ltrim(apenasDigitos($t['numero_titulo']), '0') === ltrim($c['nosso_numero'], '0')) {
+            $numeroTitulo = $t['boleto_nosso_numero'] ?: $t['numero_titulo'];
+            if ($numeroTitulo && $c['nosso_numero'] && ltrim(apenasDigitos($numeroTitulo), '0') === ltrim($c['nosso_numero'], '0')) {
                 $pontos += 10; // o nosso número já estava anotado no título
             }
             if (abs((float) $t['valor'] - $c['valor']) < 0.005) {

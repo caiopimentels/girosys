@@ -41,10 +41,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $n = count($parcelas);
+        $idsNovos = [];
         foreach ($parcelas as $i => $p) {
             $ins->execute([$tipo, $pagadorId, $clienteId, $descricao . ($n > 1 ? ' (' . ($i + 1) . "/{$n})" : ''), $categoriaId, $p['numero'] ?: null,
                 $p['valor'], $p['vencimento'], $contaId, input('observacao') ?: null]);
+            $idsNovos[] = (int) $pdo->lastInsertId();
         }
+        copiarNossoNumero($pdo, $idsNovos);
         registrarAtividade('contas_receber', 'criacao', ($n > 1 ? "{$n} parcelas lançadas" : 'Conta a receber lançada') . ': ' . $descricao . ' · ' . tipoTituloLabel($tipo) . ' · total ' . formatMoney(array_sum(array_column($parcelas, 'valor')))
             . (input('pagador_nome') ? ' · pagador ' . input('pagador_nome') : '') . (input('cliente_nome') ? ' · cliente ' . input('cliente_nome') : '') . ' · vencimentos ' . implode(', ', array_map(fn ($p) => formatDate($p['vencimento']), $parcelas)));
         $pdo->commit();

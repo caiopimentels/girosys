@@ -38,7 +38,7 @@ responderJson([
     'historico' => $h,
     'badge' => badgeClassificacao($h['classificacao']),
     'resumo' => $h['total'] > 0
-        ? "{$rotulo}: {$h['total']} título(s), {$h['em_dia']} em dia, {$h['com_atraso']} com atraso, {$h['devolvidos']} devolvido(s), {$h['vencidos']} vencido(s) em aberto"
+        ? "{$rotulo}: {$h['total']} título(s), {$h['em_dia']} em dia, {$h['com_atraso']} com atraso, {$h['devolvidos']} devolvido(s), {$h['vencidos']} vencido(s) em aberto" . ($h['renegociados'] ? ", {$h['renegociados']} renegociado(s)" : '')
         : 'Nenhum título deste pagador ainda',
     'adiantamentos' => array_map(fn ($a) => [
         'id' => (int) $a['id'],

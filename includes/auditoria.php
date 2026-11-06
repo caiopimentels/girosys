@@ -34,6 +34,7 @@ function operacoesAuditoria(): array
         'estorno' => 'Estorno',
         'reabertura' => 'Reabertura',
         'recalculo' => 'Recálculo',
+        'renegociacao' => 'Renegociação',
         'devolucao' => 'Devolução ao cliente',
         'pagamento' => 'Pagamento',
         'transferencia' => 'Transferência',

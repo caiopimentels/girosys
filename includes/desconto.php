@@ -188,6 +188,7 @@ function salvarOperacao(PDO $pdo, array $dados): int
         $stmt->execute([$clienteId]);
         $cliente = $stmt->fetch();
 
+        $idsTitulos = [];
         $insTitulo = $pdo->prepare(
             "INSERT INTO contas_receber (operacao_id, tipo, emitente_id, cliente_id, categoria_id, banco_titulo, numero_titulo, valor, data_vencimento,
                                          dias, juros, valor_liquido, conta_destino_id, observacao)
@@ -202,7 +203,9 @@ function salvarOperacao(PDO $pdo, array $dados): int
                 $operacaoId, $t['tipo'], $emitenteId, $clienteId, $t['banco_titulo'] ?: null, $t['numero_titulo'] ?: null,
                 $t['valor'], $t['vencimento'], $t['dias'], $t['juros'], $t['valor_liquido'], idOuNull($t['conta_destino_id']), $t['observacao'] ?: null,
             ]);
+            $idsTitulos[] = (int) $pdo->lastInsertId();
         }
+        copiarNossoNumero($pdo, $idsTitulos);
 
         $insUso = $pdo->prepare('INSERT INTO operacao_adiantamentos (operacao_id, adiantamento_id, valor_usado, dias, juros) VALUES (?, ?, ?, ?, ?)');
         $updUso = $pdo->prepare('UPDATE adiantamentos SET valor_utilizado = valor_utilizado + ? WHERE id = ?');

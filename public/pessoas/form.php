@@ -107,7 +107,7 @@ $repSit = array_key_exists($_GET['rep_sit'] ?? '', $situacoes) ? $_GET['rep_sit'
 [$repDe, $repAte, $repDeSql, $repAteSql] = periodoFiltro('', '', 'rep_de', 'rep_ate');
 [$opDe, $opAte, $opDeSql, $opAteSql] = periodoFiltro('', '', 'op_de', 'op_ate');
 [$extDe, $extAte] = periodoFiltro('', '', 'ext_de', 'ext_ate');
-$filtroTitulos = ['pendentes' => " AND r.status IN ('pendente', 'devolvido')", 'pagos' => " AND r.status IN ('recebido', 'transferido', 'cancelado')", 'todos' => ''][$recSit];
+$filtroTitulos = ['pendentes' => " AND r.status IN ('pendente', 'devolvido')", 'pagos' => " AND r.status IN ('recebido', 'transferido', 'cancelado', 'renegociado')", 'todos' => ''][$recSit];
 $filtroRepasses = ['pendentes' => ' AND a.valor - a.valor_utilizado > 0.004', 'pagos' => ' AND a.valor - a.valor_utilizado <= 0.004', 'todos' => ''][$repSit];
 if ($id) {
     $historico = historicoEmitente($pdo, $id);

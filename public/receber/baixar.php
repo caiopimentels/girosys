@@ -125,10 +125,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'UPDATE contas_receber SET tipo = ?, emitente_id = ?, valor = ?, data_vencimento = ?, conta_destino_id = ?, banco_titulo = ?, numero_titulo = ?, descricao = ?, observacao = ? WHERE id = ?'
             )->execute([$tipo, $pagadorId, $valor, $venc, idOuNull($_POST['conta_destino_id'] ?? null), input('banco_titulo') ?: null,
                 input('numero_titulo') ?: null, input('descricao') ?: null, input('observacao') ?: null, $id]);
+            if (!$t['boleto_codigo'] && array_key_exists('boleto_nosso_numero', $_POST)) {
+                $nossoNumero = apenasDigitos(input('boleto_nosso_numero')) ?: null;
+                if ($nossoNumero) {
+                    $dup = $pdo->prepare("SELECT id FROM contas_receber WHERE boleto_nosso_numero = ? AND id <> ? AND status <> 'renegociado' LIMIT 1");
+                    $dup->execute([$nossoNumero, $id]);
+                    if ($outro = $dup->fetchColumn()) {
+                        throw new InvalidArgumentException('O nosso número ' . $nossoNumero . ' já está no título #' . $outro . '.');
+                    }
+                }
+                $pdo->prepare('UPDATE contas_receber SET boleto_nosso_numero = ? WHERE id = ?')->execute([$nossoNumero, $id]);
+            }
             registrarAtividade('contas_receber', 'edicao', 'Alterado o ' . $rotuloTitulo . ': ' . descreverAlteracoes(
-                ['tipo' => tipoTituloLabel($t['tipo']), 'pagador' => $t['emitente_nome'], 'valor' => formatMoney($t['valor']), 'vencimento' => formatDate($t['data_vencimento']), 'numero' => $t['numero_titulo'], 'descricao' => $t['descricao'], 'conta' => $t['conta_destino_id']],
-                ['tipo' => tipoTituloLabel($tipo), 'pagador' => $pagadorId == $t['emitente_id'] ? $t['emitente_nome'] : input('pagador_nome'), 'valor' => formatMoney($valor), 'vencimento' => formatDate($venc), 'numero' => input('numero_titulo') ?: null, 'descricao' => input('descricao') ?: null, 'conta' => idOuNull($_POST['conta_destino_id'] ?? null)],
-                ['tipo' => 'Tipo', 'pagador' => 'Pagador', 'valor' => 'Valor', 'vencimento' => 'Vencimento', 'numero' => 'Número', 'descricao' => 'Descrição', 'conta' => 'Conta de destino']));
+                ['tipo' => tipoTituloLabel($t['tipo']), 'pagador' => $t['emitente_nome'], 'valor' => formatMoney($t['valor']), 'vencimento' => formatDate($t['data_vencimento']), 'numero' => $t['numero_titulo'], 'nosso' => $t['boleto_nosso_numero'], 'descricao' => $t['descricao'], 'conta' => $t['conta_destino_id']],
+                ['tipo' => tipoTituloLabel($tipo), 'pagador' => $pagadorId == $t['emitente_id'] ? $t['emitente_nome'] : input('pagador_nome'), 'valor' => formatMoney($valor), 'vencimento' => formatDate($venc), 'numero' => input('numero_titulo') ?: null, 'nosso' => $t['boleto_codigo'] ? $t['boleto_nosso_numero'] : (apenasDigitos(input('boleto_nosso_numero')) ?: null), 'descricao' => input('descricao') ?: null, 'conta' => idOuNull($_POST['conta_destino_id'] ?? null)],
+                ['tipo' => 'Tipo', 'pagador' => 'Pagador', 'valor' => 'Valor', 'vencimento' => 'Vencimento', 'numero' => 'Nº', 'nosso' => 'Nosso número', 'descricao' => 'Descrição', 'conta' => 'Conta de destino']));
             $mudouCalculo = $t['operacao_id'] && !$ehResidual && ((float) $valor !== (float) $t['valor'] || $venc !== $t['data_vencimento']);
             if ($mudouCalculo) {
                 recalcularTituloOperacao($pdo, $id);
@@ -209,6 +220,8 @@ require __DIR__ . '/../../includes/layout_header.php';
         ]))) ?>
         <?php if ($t['status'] === 'recebido'): ?><div class="valor-positivo fw-semibold mt-1">Recebido <?= formatMoney($t['valor_recebido']) ?> em <?= formatDate($t['data_recebimento']) ?> · <?= e($t['conta_recebimento_nome']) ?><?= $t['acrescimo'] > 0 ? ' (inclui ' . formatMoney($t['acrescimo']) . ' de juros/multa)' : '' ?></div><?php endif; ?>
         <?php if ($t['devolvido_em']): ?><div class="valor-negativo mt-1">Devolução: <?= e($t['motivo_devolucao'] ?: formatDate($t['devolvido_em'])) ?></div><?php endif; ?>
+        <?php if ($t['renegociado_em_id']): ?><div class="fw-semibold mt-1">Renegociado — substituído pelos títulos da <a href="/receber/renegociar.php?id=<?= (int) $t['renegociado_em_id'] ?>">renegociação #<?= (int) $t['renegociado_em_id'] ?></a></div><?php endif; ?>
+        <?php if ($t['renegociacao_id']): ?><div class="small mt-1">Veio da <a href="/receber/renegociar.php?id=<?= (int) $t['renegociacao_id'] ?>">renegociação #<?= (int) $t['renegociacao_id'] ?></a></div><?php endif; ?>
         <?php if ($t['status'] === 'transferido'): ?><div class="fw-semibold mt-1">Devolvido para o cliente em <?= formatDate($t['data_recebimento']) ?> · virou repasse de <?= formatMoney($t['valor_recebido']) ?> em aberto de <?= e($t['cliente_nome']) ?></div><?php endif; ?>
         <?php if ($t['observacao']): ?><div class="mt-1"><?= nl2br(e($t['observacao'])) ?></div><?php endif; ?>
         <?php if ($t['restante_de_id']): ?><div class="mt-1"><i class="bi bi-link-45deg"></i> Restante do <a href="#" onclick="event.preventDefault(); abrirDetalhe('/receber/baixar.php?id=<?= (int) $t['restante_de_id'] ?>')">título #<?= (int) $t['restante_de_id'] ?></a></div><?php endif; ?>
@@ -277,14 +290,14 @@ require __DIR__ . '/../../includes/layout_header.php';
                 </form>
             <?php endif; ?>
             <?php if ($contasBoleto && in_array($t['status'], ['pendente', 'devolvido'], true)): ?>
-            <details class="mt-3" <?= $t['tipo'] === 'boleto' && $t['numero_titulo'] ? 'open' : '' ?>>
+            <details class="mt-3" <?= $t['boleto_nosso_numero'] ? 'open' : '' ?>>
                 <summary class="small">Este boleto já foi emitido no Inter (pelo app ou internet banking)? Ligar ao título</summary>
                 <form method="post" class="d-flex flex-wrap gap-2 align-items-end mt-2" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = 'Procurando no Inter...';">
                     <input type="hidden" name="acao" value="vincular_boleto">
                     <div><label class="form-label small mb-1">Conta do Inter</label><select name="boleto_conta_id" class="form-select form-select-sm">
                         <?php foreach ($contasBoleto as $cb): ?><option value="<?= (int) $cb['id'] ?>" <?= (int) $cb['id'] === (int) $t['conta_destino_id'] ? 'selected' : '' ?>><?= e($cb['nome']) ?></option><?php endforeach; ?></select></div>
                     <div><label class="form-label small mb-1">Nosso número</label><input type="text" name="nosso_numero" class="form-control form-control-sm" style="width: 200px;" inputmode="numeric"
-                        placeholder="em branco = procurar" value="<?= e($t['tipo'] === 'boleto' ? (string) $t['numero_titulo'] : '') ?>"></div>
+                        placeholder="em branco = procurar" value="<?= e((string) ($t['boleto_nosso_numero'] ?: ($t['tipo'] === 'boleto' ? $t['numero_titulo'] : ''))) ?>"></div>
                     <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-link-45deg"></i> Procurar e ligar</button>
                     <div class="form-text w-100 mt-0">Sem o nosso número, o sistema procura no Inter um boleto de <?= formatMoney($t['valor']) ?> vencendo em <?= formatDate($t['data_vencimento']) ?>. Ligado, ele baixa sozinho quando for pago (webhook e conferência), como os emitidos pelo sistema.
                         Muitos de uma vez: <?= usuarioEhAdmin() ? '<a href="/contas/vincular_boletos.php">Vincular boletos emitidos fora do sistema</a>' : 'peça ao administrador (Contas bancárias › Conferir boletos)' ?>.</div>
@@ -328,7 +341,10 @@ require __DIR__ . '/../../includes/layout_header.php';
                     })();
                     </script>
                     <div class="col-md-3"><label class="form-label small">Banco</label><input type="text" name="banco_titulo" class="form-control" value="<?= e($t['banco_titulo']) ?>"></div>
-                    <div class="col-md-3"><label class="form-label small">Nº</label><input type="text" name="numero_titulo" class="form-control" value="<?= e($t['numero_titulo']) ?>"></div>
+                    <div class="col-md-3"><label class="form-label small">Nº / referência</label><input type="text" name="numero_titulo" class="form-control" value="<?= e($t['numero_titulo']) ?>"></div>
+                    <div class="col-md-6"><label class="form-label small">Nosso número do boleto <span class="text-muted">(o "identificador" do Inter)</span></label>
+                        <input type="text" name="boleto_nosso_numero" class="form-control" inputmode="numeric" maxlength="30" value="<?= e($t['boleto_nosso_numero']) ?>" <?= $t['boleto_codigo'] ? 'readonly title="Veio do banco"' : '' ?>>
+                        <div class="form-text">É por ele que a planilha de boletos do banco acha este título para dar a baixa.</div></div>
                     <div class="col-md-6"></div>
                     <div class="col-12"><label class="form-label small">Observação</label><textarea name="observacao" class="form-control" rows="2"><?= e($t['observacao']) ?></textarea></div>
                     <?php if ($t['operacao_id'] && !$ehResidual): ?><div class="col-12 form-text">Mudando valor ou vencimento, os juros deste título e os totais da operação são recalculados.</div><?php endif; ?>

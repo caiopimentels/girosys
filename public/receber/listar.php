@@ -18,11 +18,12 @@ match ($situacao) {
     'recebidos' => $where[] = "r.status = 'recebido'",
     'cancelados' => $where[] = "r.status = 'cancelado'",
     'transferidos' => $where[] = "r.status = 'transferido'",
+    'renegociados' => $where[] = "r.status = 'renegociado'",
     default => null,
 };
 if ($busca !== '') {
-    $where[] = '(e.nome LIKE ? OR cl.nome LIKE ? OR r.numero_titulo LIKE ? OR r.descricao LIKE ?)';
-    array_push($params, "%{$busca}%", "%{$busca}%", "%{$busca}%", "%{$busca}%");
+    $where[] = '(e.nome LIKE ? OR cl.nome LIKE ? OR r.numero_titulo LIKE ? OR r.boleto_nosso_numero LIKE ? OR r.descricao LIKE ?)';
+    array_push($params, "%{$busca}%", "%{$busca}%", "%{$busca}%", "%{$busca}%", "%{$busca}%");
 }
 if ($contaId) {
     $where[] = 'COALESCE(r.conta_recebimento_id, r.conta_destino_id) = ?';
@@ -75,7 +76,7 @@ $informacoes = [
     ['Vencidos / devolvidos', count($vencidos) . ' · ' . formatMoney(array_sum(array_map(fn ($t) => $atualizacoes[$t['id']]['total'], $vencidos))), $vencidos ? 'valor-negativo' : ''],
 ];
 $somasSelecao = ['valor' => 'Valor', 'atualizado' => 'Atualizado hoje'];
-$acoesLaterais = [['Receber selecionados', 'bi-check2-all', 'abrirBaixaLote()']];
+$acoesLaterais = [['Receber selecionados', 'bi-check2-all', 'abrirBaixaLote()'], ['Renegociar selecionados', 'bi-arrow-left-right', 'renegociarSelecionados()']];
 
 // Planilha (CSV para o Excel) com tudo o que está filtrado na tela.
 if (isset($_GET['csv'])) {
@@ -91,7 +92,7 @@ if (isset($_GET['csv'])) {
             formatDate($t['data_vencimento']), tipoTituloLabel($t['tipo']), $t['emitente_nome'], documentoFormatado($t['emitente_documento']), $t['cliente_nome'],
             $t['numero_titulo'], $t['descricao'], formatDecimal($t['valor']), formatDecimal($t['status'] === 'recebido' ? $t['valor_recebido'] : $at['total']),
             $at['dias'] ?: '', $t['conta_nome'], ['vencido' => 'Vencido', 'pendente' => 'Pendente', 'recebido' => 'Recebido', 'devolvido' => 'Devolvido',
-                'cancelado' => 'Cancelado', 'transferido' => 'Devolvido ao cliente'][statusTelaReceber($t)] ?? $t['status'],
+                'cancelado' => 'Cancelado', 'renegociado' => 'Renegociado', 'transferido' => 'Devolvido ao cliente'][statusTelaReceber($t)] ?? $t['status'],
             formatDate($t['data_recebimento']) === '-' ? '' : formatDate($t['data_recebimento']), $t['valor_recebido'] !== null ? formatDecimal($t['valor_recebido']) : '',
             $t['operacao_id'] ? '#' . $t['operacao_id'] : '',
         ], ';', '"', '');
@@ -101,7 +102,7 @@ if (isset($_GET['csv'])) {
 
 // Relatório para imprimir / salvar em PDF, com os mesmos filtros da tela.
 if (isset($_GET['imprimir'])) {
-    $situacoesRel = ['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'cancelados' => 'Cancelados', 'todos' => 'Todos'];
+    $situacoesRel = ['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'renegociados' => 'Renegociados', 'cancelados' => 'Cancelados', 'todos' => 'Todos'];
     $filtrosRel = array_filter([
         'Situação: ' . ($situacoesRel[$situacao] ?? $situacao),
         $tipo ? 'Tipo: ' . tipoTituloLabel($tipo) : null,
@@ -146,7 +147,7 @@ if (isset($_GET['imprimir'])) {
                 <td class="text-end text-num"><?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?></td>
                 <td class="text-end text-num <?= $at['total'] > $t['valor'] + 0.004 ? 'valor-negativo' : '' ?>"><?= $t['status'] === 'recebido' ? '-' : formatMoney($at['total']) ?></td>
                 <td><?= $st === 'vencido' || $st === 'devolvido' ? ($st === 'vencido' ? 'Vencido' : 'Devolvido') . ($at['dias'] ? ' há ' . $at['dias'] . ' dia' . ($at['dias'] > 1 ? 's' : '') : '')
-                    : (['pendente' => 'Pendente', 'recebido' => 'Recebido ' . formatDate($t['data_recebimento']), 'cancelado' => 'Cancelado', 'transferido' => 'Devolvido ao cliente'][$st] ?? $st) ?></td>
+                    : (['pendente' => 'Pendente', 'recebido' => 'Recebido ' . formatDate($t['data_recebimento']), 'cancelado' => 'Cancelado', 'renegociado' => 'Renegociado', 'transferido' => 'Devolvido ao cliente'][$st] ?? $st) ?></td>
             </tr>
         <?php endforeach; ?>
         <?php if (!$titulos): ?><tr><td colspan="9" class="text-center text-muted py-3">Nada com esses filtros.</td></tr><?php endif; ?>
@@ -167,6 +168,7 @@ $pageBreadcrumb = 'Financeiro';
 $activeMenu = 'receber';
 $pageAction = '<a href="?' . e(http_build_query(array_merge($_GET, ['imprimir' => 1]))) . '" target="_blank" class="btn btn-outline-secondary"><i class="bi bi-printer"></i> Imprimir</a>'
     . '<a href="?' . e(http_build_query(array_merge($_GET, ['csv' => 1]))) . '" class="btn btn-outline-secondary"><i class="bi bi-filetype-csv"></i> Planilha</a>'
+    . (usuarioTemPermissao('baixar_receber') ? '<a href="/receber/importar_banco.php" class="btn btn-outline-secondary"><i class="bi bi-file-earmark-spreadsheet"></i> Importar planilha do banco</a>' : '')
     . '<a href="/receber/form.php" class="btn btn-outline-secondary"><i class="bi bi-plus-lg"></i> Lançamento avulso</a>'
     . '<a href="/operacoes/form.php" class="btn btn-brand"><i class="bi bi-calculator"></i> Nova operação</a>';
 require __DIR__ . '/../../includes/layout_header.php';
@@ -176,7 +178,7 @@ require __DIR__ . '/../../includes/layout_header.php';
 <div class="filtros">
     <form method="get">
         <select name="situacao" class="form-select form-select-sm" style="width: 150px;">
-            <?php foreach (['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'cancelados' => 'Cancelados', 'todos' => 'Todos'] as $k => $v): ?>
+            <?php foreach (['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'renegociados' => 'Renegociados', 'cancelados' => 'Cancelados', 'todos' => 'Todos'] as $k => $v): ?>
                 <option value="<?= $k ?>" <?= $situacao === $k ? 'selected' : '' ?>><?= $v ?></option>
             <?php endforeach; ?>
         </select>
@@ -230,6 +232,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                         match ($t['status']) {
                             'recebido' => 'Já recebido: estorne o recebimento antes de excluir',
                             'transferido' => 'Devolvido ao cliente: desfaça a devolução antes',
+                            'renegociado' => 'Renegociado: desfaça a renegociação antes',
                             default => 'Já voltou devolvido: fica no histórico do pagador',
                         },
                         in_array($t['status'], ['pendente', 'devolvido'], true)
@@ -276,6 +279,12 @@ function abrirBaixaLote() {
     document.getElementById('lote-resumo').innerHTML = '<strong>' + marcados.length + ' título(s)</strong> · ' + total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) + ' atualizado até hoje';
     document.getElementById('lote-ids').innerHTML = marcados.map((c) => '<input type="hidden" name="ids[]" value="' + c.value + '">').join('');
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-lote')).show();
+}
+// Renegociar: abre a tela com os marcados em aberto (um pagador por vez).
+function renegociarSelecionados() {
+    const marcados = [...document.querySelectorAll('.selecao-item:checked')].filter((c) => c.dataset.aberto === '1');
+    if (!marcados.length) { alert('Marque na lista os títulos em aberto que quer renegociar.'); return; }
+    location.href = '/receber/renegociar.php?' + marcados.map((c) => 'ids[]=' + encodeURIComponent(c.value)).join('&');
 }
 </script>
 

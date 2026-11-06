@@ -57,6 +57,9 @@ require_once __DIR__ . '/cartoes.php';
 require_once __DIR__ . '/pagamento_ui.php';
 require_once __DIR__ . '/extrato_cliente.php';
 require_once __DIR__ . '/inter.php';
+require_once __DIR__ . '/planilha.php';
+require_once __DIR__ . '/importacao_banco.php';
+require_once __DIR__ . '/renegociacao.php';
 
 csrfToken();
 
