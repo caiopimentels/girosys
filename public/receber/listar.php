@@ -39,6 +39,11 @@ if ($boleto === 'a_registrar') {
 } elseif ($boleto === 'registrados') {
     $where[] = "(r.boleto_nosso_numero IS NOT NULL OR (r.boleto_codigo IS NOT NULL AND r.boleto_situacao NOT IN ('CANCELADO', 'EXPIRADO')))";
 }
+// Imprimir / planilha só dos marcados na tela (ids[]); sem marcação, tudo o que está filtrado.
+$idsMarcados = array_values(array_unique(array_filter(array_map('intval', (array) ($_GET['ids'] ?? [])))));
+if ($idsMarcados && (isset($_GET['imprimir']) || isset($_GET['csv']))) {
+    $where[] = 'r.id IN (' . implode(',', $idsMarcados) . ')';
+}
 $campoData = $situacao === 'recebidos' ? 'r.data_recebimento' : 'r.data_vencimento';
 if ($de) {
     $where[] = "{$campoData} >= ?";
@@ -116,6 +121,7 @@ if (isset($_GET['csv'])) {
 if (isset($_GET['imprimir'])) {
     $situacoesRel = ['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'renegociados' => 'Renegociados', 'cancelados' => 'Cancelados', 'todos' => 'Todos'];
     $filtrosRel = array_filter([
+        $idsMarcados ? 'Só os ' . count($idsMarcados) . ' título(s) selecionado(s)' : null,
         'Situação: ' . ($situacoesRel[$situacao] ?? $situacao),
         $tipo ? 'Tipo: ' . tipoTituloLabel($tipo) : null,
         $contaId ? 'Conta: ' . ($pdo->query('SELECT nome FROM contas_bancarias WHERE id = ' . (int) $contaId)->fetchColumn()) : null,
@@ -178,8 +184,8 @@ if (isset($_GET['imprimir'])) {
 $pageTitle = 'Contas a receber';
 $pageBreadcrumb = 'Financeiro';
 $activeMenu = 'receber';
-$pageAction = '<a href="?' . e(http_build_query(array_merge($_GET, ['imprimir' => 1]))) . '" target="_blank" class="btn btn-outline-secondary"><i class="bi bi-printer"></i> Imprimir</a>'
-    . '<a href="?' . e(http_build_query(array_merge($_GET, ['csv' => 1]))) . '" class="btn btn-outline-secondary"><i class="bi bi-filetype-csv"></i> Planilha</a>'
+$pageAction = '<a href="?' . e(http_build_query(array_merge($_GET, ['imprimir' => 1]))) . '" target="_blank" class="btn btn-outline-secondary" data-com-selecao title="Com títulos marcados, imprime só eles"><i class="bi bi-printer"></i> Imprimir</a>'
+    . '<a href="?' . e(http_build_query(array_merge($_GET, ['csv' => 1]))) . '" class="btn btn-outline-secondary" data-com-selecao title="Com títulos marcados, só eles vão para a planilha"><i class="bi bi-filetype-csv"></i> Planilha</a>'
     . (usuarioTemPermissao('baixar_receber') ? '<a href="/receber/importar_banco.php" class="btn btn-outline-secondary"><i class="bi bi-file-earmark-spreadsheet"></i> Importar planilha do banco</a>' : '')
     . '<a href="/receber/form.php" class="btn btn-outline-secondary"><i class="bi bi-plus-lg"></i> Lançamento avulso</a>'
     . '<a href="/operacoes/form.php" class="btn btn-brand"><i class="bi bi-calculator"></i> Nova operação</a>';
@@ -317,6 +323,13 @@ require __DIR__ . '/../../includes/layout_header.php';
     </div>
 </div>
 <script>
+// Imprimir / Planilha: com títulos marcados, leva só eles (ids[] na URL).
+document.querySelectorAll('[data-com-selecao]').forEach((link) => link.addEventListener('click', () => {
+    const url = new URL(link.href, location.href);
+    url.searchParams.delete('ids[]');
+    document.querySelectorAll('.selecao-item:checked').forEach((c) => url.searchParams.append('ids[]', c.value));
+    link.href = url.toString();
+}));
 // Registrar boleto: um (botão da linha) ou os marcados que precisam de boleto.
 function registrarBoletos(ids) {
     const linhas = ids.length === 1 ? 'o boleto deste título' : ids.length + ' boleto(s)';
