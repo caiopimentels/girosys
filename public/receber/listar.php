@@ -101,13 +101,16 @@ if (isset($_GET['csv'])) {
     header('Content-Disposition: attachment; filename="contas-a-receber-' . date('Y-m-d') . '.csv"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF"); // acentos certos no Excel
-    fputcsv($out, ['Vencimento', 'Tipo', 'Pagador', 'CPF/CNPJ pagador', 'Cliente', 'Nº', 'Descrição', 'Valor', 'Atualizado hoje', 'Dias de atraso',
+    // ID e Nosso número permitem devolver a planilha preenchida em
+    // /receber/atualizar_planilha.php. O nosso número vai como ="123" para o
+    // Excel não virar notação científica nem comer zeros à esquerda.
+    fputcsv($out, ['ID', 'Vencimento', 'Tipo', 'Pagador', 'CPF/CNPJ pagador', 'Cliente', 'Nº', 'Nosso número', 'Descrição', 'Valor', 'Atualizado hoje', 'Dias de atraso',
         'Conta', 'Situação', 'Recebido em', 'Valor recebido', 'Operação'], ';', '"', '');
     foreach ($titulos as $t) {
         $at = $atualizacoes[$t['id']];
         fputcsv($out, [
-            formatDate($t['data_vencimento']), tipoTituloLabel($t['tipo']), $t['emitente_nome'], documentoFormatado($t['emitente_documento']), $t['cliente_nome'],
-            $t['numero_titulo'], $t['descricao'], formatDecimal($t['valor']), formatDecimal($t['status'] === 'recebido' ? $t['valor_recebido'] : $at['total']),
+            $t['id'], formatDate($t['data_vencimento']), tipoTituloLabel($t['tipo']), $t['emitente_nome'], documentoFormatado($t['emitente_documento']), $t['cliente_nome'],
+            $t['numero_titulo'], $t['boleto_nosso_numero'] ? '="' . $t['boleto_nosso_numero'] . '"' : '', $t['descricao'], formatDecimal($t['valor']), formatDecimal($t['status'] === 'recebido' ? $t['valor_recebido'] : $at['total']),
             $at['dias'] ?: '', $t['conta_nome'], ['vencido' => 'Vencido', 'pendente' => 'Pendente', 'recebido' => 'Recebido', 'devolvido' => 'Devolvido',
                 'cancelado' => 'Cancelado', 'renegociado' => 'Renegociado', 'transferido' => 'Devolvido ao cliente'][statusTelaReceber($t)] ?? $t['status'],
             formatDate($t['data_recebimento']) === '-' ? '' : formatDate($t['data_recebimento']), $t['valor_recebido'] !== null ? formatDecimal($t['valor_recebido']) : '',
@@ -186,6 +189,7 @@ $pageBreadcrumb = 'Financeiro';
 $activeMenu = 'receber';
 $pageAction = '<a href="?' . e(http_build_query(array_merge($_GET, ['imprimir' => 1]))) . '" target="_blank" class="btn btn-outline-secondary" data-com-selecao title="Com títulos marcados, imprime só eles"><i class="bi bi-printer"></i> Imprimir</a>'
     . '<a href="?' . e(http_build_query(array_merge($_GET, ['csv' => 1]))) . '" class="btn btn-outline-secondary" data-com-selecao title="Com títulos marcados, só eles vão para a planilha"><i class="bi bi-filetype-csv"></i> Planilha</a>'
+    . '<a href="/receber/atualizar_planilha.php" class="btn btn-outline-secondary" title="Baixe a Planilha, preencha o nosso número e envie de volta"><i class="bi bi-upload"></i> Atualizar pela planilha</a>'
     . (usuarioTemPermissao('baixar_receber') ? '<a href="/receber/importar_banco.php" class="btn btn-outline-secondary"><i class="bi bi-file-earmark-spreadsheet"></i> Importar planilha do banco</a>' : '')
     . '<a href="/receber/form.php" class="btn btn-outline-secondary"><i class="bi bi-plus-lg"></i> Lançamento avulso</a>'
     . '<a href="/operacoes/form.php" class="btn btn-brand"><i class="bi bi-calculator"></i> Nova operação</a>';

@@ -36,24 +36,35 @@
 <script src="<?= e(assetUrl('/assets/js/parcelas.js')) ?>"></script>
 <script>
 (function () {
-    let restante = <?= (int) sessaoSegundosRestantes() ?>;
+    // Conta pelo relógio, não por ticks: com o note suspenso (tampa fechada)
+    // o navegador congela o setInterval, e ao acordar o timer continuaria de
+    // onde parou. Pelo horário-limite, ao voltar já se sabe que expirou.
+    const limite = Date.now() + <?= (int) sessaoSegundosRestantes() ?> * 1000;
     const elValor = document.getElementById('sessao-timer-valor');
     const elBadge = document.getElementById('topnav-sessao-timer');
+    let recarregando = false;
 
-    function renderizar() {
-        if (!elValor) return;
-        elValor.textContent = String(Math.floor(restante / 60)).padStart(2, '0') + ':' + String(restante % 60).padStart(2, '0');
-        if (elBadge) elBadge.classList.toggle('topnav-sessao-alerta', restante <= 60);
+    function verificar() {
+        const restante = Math.max(0, Math.ceil((limite - Date.now()) / 1000));
+        if (elValor) {
+            elValor.textContent = String(Math.floor(restante / 60)).padStart(2, '0') + ':' + String(restante % 60).padStart(2, '0');
+            if (elBadge) elBadge.classList.toggle('topnav-sessao-alerta', restante <= 60);
+        }
+        // Quem confirma se a sessão expirou é o exigirLogin() do PHP.
+        if (restante === 0 && !recarregando) {
+            recarregando = true;
+            location.reload();
+        }
     }
 
-    setInterval(function () {
-        restante = Math.max(0, restante - 1);
-        renderizar();
-        // Quem confirma se a sessão expirou é o exigirLogin() do PHP.
-        if (restante === 0) location.reload();
-    }, 1000);
+    setInterval(verificar, 1000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) verificar(); });
+    window.addEventListener('focus', verificar);
+    // Página restaurada do cache do navegador (botão Voltar) pode ser de uma
+    // sessão já encerrada: recarrega para o servidor decidir.
+    window.addEventListener('pageshow', function (ev) { if (ev.persisted) location.reload(); });
 
-    renderizar();
+    verificar();
 })();
 
 // Troca o tema (claro/escuro) e salva no usuário.

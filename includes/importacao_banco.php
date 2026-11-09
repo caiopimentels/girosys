@@ -204,3 +204,102 @@ function aplicarImportacaoBoletos(PDO $pdo, array $boletos, array $escolhas, int
     }
     return [$baixados, round($total, 2), $numeros, $avisos, $detalhes];
 }
+
+// ---------------------------------------------------------------------------
+// Planilha de contas a receber devolvida preenchida: a mesma que sai no botão
+// "Planilha" da listagem, com o nosso número digitado. Acha as colunas ID e
+// Nosso número pelo cabeçalho; as outras colunas são ignoradas.
+
+/** [id => texto do nosso número como veio] e as linhas que não deu para ler. */
+function lerPlanilhaNossoNumero(array $linhas): array
+{
+    $colId = $colNosso = null;
+    $inicio = 0;
+    foreach ($linhas as $i => $linha) {
+        foreach ($linha as $c => $v) {
+            $n = preg_replace('/[^a-z]+/', '', strtr(mb_strtolower(trim((string) $v)), ['ú' => 'u', 'º' => 'o', '°' => 'o']));
+            if ($n === 'id') {
+                $colId = $c;
+            } elseif (in_array($n, ['nossonumero', 'nosson', 'nossono'], true)) {
+                $colNosso = $c;
+            }
+        }
+        if ($colId !== null && $colNosso !== null) {
+            $inicio = $i + 1;
+            break;
+        }
+        $colId = $colNosso = null;
+    }
+    if ($colId === null) {
+        throw new InvalidArgumentException('Não achei as colunas "ID" e "Nosso número" no cabeçalho. Use a planilha baixada no botão Planilha de Contas a receber.');
+    }
+
+    $valores = [];
+    $erros = [];
+    foreach (array_slice($linhas, $inicio, null, true) as $i => $linha) {
+        $id = (int) apenasDigitos((string) ($linha[$colId] ?? ''));
+        if (!$id) {
+            continue;
+        }
+        $bruto = $linha[$colNosso] ?? '';
+        if (is_float($bruto)) {
+            $bruto = sprintf('%.0f', $bruto);
+        }
+        $bruto = trim((string) $bruto);
+        // Excel salvando CSV com número grande: "1,23457E+11" — os dígitos já se perderam.
+        if (preg_match('/e\+?\d+$/i', $bruto)) {
+            $erros[] = 'Linha ' . ($i + 1) . ' (#' . $id . '): o Excel converteu o nosso número em notação científica (' . $bruto . '). Formate a coluna como Texto e digite de novo, ou salve em .xlsx.';
+            continue;
+        }
+        $valores[$id] = apenasDigitos($bruto);
+    }
+    return [$valores, $erros];
+}
+
+/**
+ * O que fazer com cada linha: gravar, igual, vazio (planilha em branco: não
+ * apaga), sem_titulo, registrado (boleto emitido pelo sistema: o número veio
+ * do banco), duplicado ou invalido.
+ */
+function analisarNossoNumeroPlanilha(PDO $pdo, array $valores): array
+{
+    if (!$valores) {
+        return [];
+    }
+    $ids = array_map('intval', array_keys($valores));
+    $stmt = $pdo->query('SELECT r.id, r.tipo, r.status, r.valor, r.data_vencimento, r.boleto_codigo, r.boleto_nosso_numero, e.nome AS pagador_nome
+        FROM contas_receber r LEFT JOIN pessoas e ON e.id = r.emitente_id WHERE r.id IN (' . implode(',', $ids) . ')');
+    $titulos = array_column($stmt->fetchAll(), null, 'id');
+    $repetidos = array_filter(array_count_values(array_filter($valores, fn ($v) => $v !== '')), fn ($n) => $n > 1);
+    $outro = $pdo->prepare("SELECT id FROM contas_receber WHERE boleto_nosso_numero = ? AND id <> ? AND status <> 'renegociado' LIMIT 1");
+
+    $linhas = [];
+    foreach ($valores as $id => $novo) {
+        $t = $titulos[$id] ?? null;
+        $atual = (string) ($t['boleto_nosso_numero'] ?? '');
+        $acao = 'gravar';
+        $motivo = '';
+        if (!$t) {
+            $acao = 'sem_titulo';
+        } elseif ($novo === '') {
+            $acao = 'vazio';
+        } elseif ($novo === $atual) {
+            $acao = 'igual';
+        } elseif (strlen($novo) > 30) {
+            [$acao, $motivo] = ['invalido', 'mais de 30 dígitos'];
+        } elseif ($t['boleto_codigo']) {
+            [$acao, $motivo] = ['registrado', 'boleto emitido pelo sistema: o nosso número veio do banco'];
+        } else {
+            $outro->execute([$novo, $id]);
+            $dono = $outro->fetchColumn();
+            // Se o dono atual também está trocando de número nesta planilha, libera.
+            if ($dono && !(isset($valores[$dono]) && $valores[$dono] !== '' && $valores[$dono] !== $novo)) {
+                [$acao, $motivo] = ['duplicado', 'já está no título #' . $dono];
+            } elseif (isset($repetidos[$novo])) {
+                [$acao, $motivo] = ['duplicado', 'o mesmo número aparece em mais de uma linha da planilha'];
+            }
+        }
+        $linhas[] = ['id' => $id, 'novo' => $novo, 'atual' => $atual, 'acao' => $acao, 'motivo' => $motivo, 'titulo' => $t];
+    }
+    return $linhas;
+}
