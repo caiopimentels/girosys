@@ -88,12 +88,24 @@ $informacoes = [
 ];
 $somasSelecao = ['valor' => 'Valor', 'atualizado' => 'Atualizado hoje'];
 $acoesLaterais = [['Receber selecionados', 'bi-check2-all', 'abrirBaixaLote()'], ['Renegociar selecionados', 'bi-arrow-left-right', 'renegociarSelecionados()']];
+// Imprimir / Planilha: com títulos marcados, levam só eles (ver abrirComSelecao no fim da página).
+$acoesListagem = [
+    ['Imprimir', 'bi-printer', "abrirComSelecao({imprimir: 1}, true)"],
+    ['Imprimir agrupado por cliente', 'bi-people', "abrirComSelecao({imprimir: 1, agrupar: 'cliente'}, true)"],
+    ['Planilha (Excel)', 'bi-filetype-csv', "abrirComSelecao({csv: 1}, false)"],
+    ['Atualizar pela planilha', 'bi-upload', "location.href='/receber/atualizar_planilha.php'"],
+];
+if (usuarioTemPermissao('baixar_receber')) {
+    $acoesListagem[] = ['Importar planilha do banco', 'bi-file-earmark-spreadsheet', "location.href='/receber/importar_banco.php'"];
+}
+$acoesListagem[] = ['Lançamento avulso', 'bi-plus-lg', "location.href='/receber/form.php'"];
 // Boleto: só para quem pode emitir e se algum tipo registra boleto (Cadastros › Tipos de recebimento).
 $podeBoleto = usuarioTemPermissao('emitir_boleto') && tiposComBoleto($pdo);
 if ($podeBoleto) {
     $acoesLaterais[] = ['Registrar boleto dos selecionados', 'bi-upc-scan', 'abrirRegistroBoletos()'];
 }
 $contasBoleto = $podeBoleto ? contasInter($pdo) : [];
+array_push($acoesLaterais, ...$acoesListagem);
 
 // Planilha (CSV para o Excel) com tudo o que está filtrado na tela.
 if (isset($_GET['csv'])) {
@@ -122,6 +134,7 @@ if (isset($_GET['csv'])) {
 
 // Relatório para imprimir / salvar em PDF, com os mesmos filtros da tela.
 if (isset($_GET['imprimir'])) {
+    $agrupado = ($_GET['agrupar'] ?? '') === 'cliente';
     $situacoesRel = ['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'renegociados' => 'Renegociados', 'cancelados' => 'Cancelados', 'todos' => 'Todos'];
     $filtrosRel = array_filter([
         $idsMarcados ? 'Só os ' . count($idsMarcados) . ' título(s) selecionado(s)' : null,
@@ -145,36 +158,91 @@ if (isset($_GET['imprimir'])) {
         body { background: #fff; font-size: .78rem; }
         .folha { padding: 1rem 1.5rem; }
         table td, table th { padding: .25rem .4rem !important; }
+        .linha-total td { font-weight: 700; border-top: 2px solid #555; border-bottom: 0; }
+        .linha-grupo td { font-weight: 700; background: #eef2f0 !important; padding-top: .45rem !important; }
+        .linha-subtotal td { font-weight: 600; border-bottom: 1.5px solid #999; }
+        .grupo-cliente { break-inside: auto; }
+        tr { break-inside: avoid; }
         @media print { .nao-imprimir { display: none !important; } .folha { padding: 0; } @page { size: landscape; margin: 10mm; } }
     </style>
 </head>
 <body>
 <div class="folha">
     <div class="d-flex justify-content-between align-items-start border-bottom pb-2 mb-2">
-        <div><div class="fw-bold fs-5"><?= e(nomeSistema()) ?></div><div class="text-muted">Relatório de contas a receber</div></div>
+        <div><div class="fw-bold fs-5"><?= e(nomeSistema()) ?></div><div class="text-muted">Relatório de contas a receber<?= $agrupado ? ' · agrupado por cliente' : '' ?></div></div>
         <div class="text-end small text-muted"><?= e(implode(' · ', $filtrosRel)) ?><br>Emitido em <?= date('d/m/Y H:i') ?></div>
     </div>
-    <table class="table table-sm align-middle">
-        <thead><tr><th>Vencimento</th><th>Tipo</th><th>Pagador</th><th>Cliente</th><th>Nº</th><th>Conta</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Situação</th></tr></thead>
-        <tbody>
-        <?php foreach ($titulos as $t): $at = $atualizacoes[$t['id']]; $st = statusTelaReceber($t); ?>
+    <?php
+    // Uma linha de título no relatório (com ou sem a coluna Cliente).
+    $linhaRel = function (array $t, bool $comCliente) use ($atualizacoes) {
+        $at = $atualizacoes[$t['id']];
+        $st = statusTelaReceber($t);
+        ?>
             <tr>
                 <td class="text-num <?= $st === 'vencido' ? 'valor-negativo' : '' ?>"><?= formatDate($t['data_vencimento']) ?></td>
                 <td><?= e(tipoTituloLabel($t['tipo'])) ?></td>
                 <td><?= e($t['emitente_nome'] ?? $t['descricao'] ?? '-') ?></td>
-                <td><?= e($t['cliente_nome'] ?? '-') ?></td>
-                <td><?= e($t['numero_titulo']) ?: '-' ?></td>
+                <?php if ($comCliente): ?><td><?= e($t['cliente_nome'] ?? '-') ?></td><?php endif; ?>
+                <td><?= e($t['numero_titulo'] ?: $t['boleto_nosso_numero']) ?: '-' ?></td>
                 <td><?= e($t['conta_nome'] ?? '—') ?></td>
                 <td class="text-end text-num"><?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?></td>
                 <td class="text-end text-num <?= $at['total'] > $t['valor'] + 0.004 ? 'valor-negativo' : '' ?>"><?= $t['status'] === 'recebido' ? '-' : formatMoney($at['total']) ?></td>
                 <td><?= $st === 'vencido' || $st === 'devolvido' ? ($st === 'vencido' ? 'Vencido' : 'Devolvido') . ($at['dias'] ? ' há ' . $at['dias'] . ' dia' . ($at['dias'] > 1 ? 's' : '') : '')
                     : (['pendente' => 'Pendente', 'recebido' => 'Recebido ' . formatDate($t['data_recebimento']), 'cancelado' => 'Cancelado', 'renegociado' => 'Renegociado', 'transferido' => 'Devolvido ao cliente'][$st] ?? $st) ?></td>
             </tr>
-        <?php endforeach; ?>
+        <?php
+    };
+    $valorRel = fn ($t) => (float) ($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']);
+    $atualRel = fn ($t) => $t['status'] === 'recebido' ? (float) $t['valor_recebido'] : $atualizacoes[$t['id']]['total'];
+    // O total vai numa linha do corpo (tfoot o navegador repete em toda página).
+    ?>
+    <?php if (!$agrupado): ?>
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Vencimento</th><th>Tipo</th><th>Pagador</th><th>Cliente</th><th>Nº</th><th>Conta</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Situação</th></tr></thead>
+        <tbody>
+        <?php foreach ($titulos as $t) { $linhaRel($t, true); } ?>
         <?php if (!$titulos): ?><tr><td colspan="9" class="text-center text-muted py-3">Nada com esses filtros.</td></tr><?php endif; ?>
+        <tr class="linha-total"><td colspan="6"><?= count($titulos) ?> título(s)</td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td><td></td></tr>
         </tbody>
-        <tfoot><tr class="fw-semibold"><td colspan="6"><?= count($titulos) ?> título(s)</td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td><td></td></tr></tfoot>
     </table>
+    <?php else:
+        $grupos = [];
+        foreach ($titulos as $t) {
+            $grupos[$t['cliente_nome'] ?? 'Sem cliente (títulos avulsos)'][] = $t;
+        }
+        $resumo = [];
+        foreach ($grupos as $nome => $ts) {
+            $resumo[$nome] = ['qtd' => count($ts), 'valor' => array_sum(array_map($valorRel, $ts)), 'atualizado' => array_sum(array_map($atualRel, $ts)),
+                'vencidos' => count(array_filter($ts, fn ($t) => in_array(statusTelaReceber($t), ['vencido', 'devolvido'], true)))];
+        }
+        uasort($resumo, fn ($a, $b) => $b['atualizado'] <=> $a['atualizado']);
+    ?>
+    <div class="fw-semibold text-uppercase small mb-1" style="letter-spacing: .06em;">Débito por cliente</div>
+    <table class="table table-sm align-middle mb-4">
+        <thead><tr><th>Cliente</th><th class="text-center">Títulos</th><th class="text-center">Vencidos</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th></tr></thead>
+        <tbody>
+        <?php foreach ($resumo as $nome => $r): ?>
+            <tr><td><?= e($nome) ?></td><td class="text-center"><?= $r['qtd'] ?></td><td class="text-center <?= $r['vencidos'] ? 'valor-negativo' : '' ?>"><?= $r['vencidos'] ?: '-' ?></td>
+                <td class="text-end text-num"><?= formatMoney($r['valor']) ?></td><td class="text-end text-num fw-semibold"><?= formatMoney($r['atualizado']) ?></td></tr>
+        <?php endforeach; ?>
+        <?php if (!$resumo): ?><tr><td colspan="5" class="text-center text-muted py-3">Nada com esses filtros.</td></tr><?php endif; ?>
+        <tr class="linha-total"><td><?= count($resumo) ?> cliente(s)</td><td class="text-center"><?= count($titulos) ?></td><td></td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td></tr>
+        </tbody>
+    </table>
+
+    <div class="fw-semibold text-uppercase small mb-1" style="letter-spacing: .06em;">Títulos de cada cliente</div>
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Vencimento</th><th>Tipo</th><th>Pagador</th><th>Nº</th><th>Conta</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Situação</th></tr></thead>
+        <?php foreach (array_keys($resumo) as $nome): $r = $resumo[$nome]; ?>
+        <tbody class="grupo-cliente">
+            <tr class="linha-grupo"><td colspan="8"><?= e($nome) ?></td></tr>
+            <?php foreach ($grupos[$nome] as $t) { $linhaRel($t, false); } ?>
+            <tr class="linha-subtotal"><td colspan="5">Total de <?= e($nome) ?> · <?= $r['qtd'] ?> título(s)</td><td class="text-end text-num"><?= formatMoney($r['valor']) ?></td><td class="text-end text-num"><?= formatMoney($r['atualizado']) ?></td><td></td></tr>
+        </tbody>
+        <?php endforeach; ?>
+        <tbody><tr class="linha-total"><td colspan="5">Total geral · <?= count($titulos) ?> título(s)</td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td><td></td></tr></tbody>
+    </table>
+    <?php endif; ?>
     <div class="text-center mt-3 nao-imprimir"><button class="btn btn-brand" onclick="window.print()">Imprimir / salvar PDF</button></div>
 </div>
 <script>window.addEventListener('load', () => setTimeout(() => window.print(), 300));</script>
@@ -187,11 +255,7 @@ if (isset($_GET['imprimir'])) {
 $pageTitle = 'Contas a receber';
 $pageBreadcrumb = 'Financeiro';
 $activeMenu = 'receber';
-$pageAction = '<a href="?' . e(http_build_query(array_merge($_GET, ['imprimir' => 1]))) . '" target="_blank" class="btn btn-outline-secondary" data-com-selecao title="Com títulos marcados, imprime só eles"><i class="bi bi-printer"></i> Imprimir</a>'
-    . '<a href="?' . e(http_build_query(array_merge($_GET, ['csv' => 1]))) . '" class="btn btn-outline-secondary" data-com-selecao title="Com títulos marcados, só eles vão para a planilha"><i class="bi bi-filetype-csv"></i> Planilha</a>'
-    . '<a href="/receber/atualizar_planilha.php" class="btn btn-outline-secondary" title="Baixe a Planilha, preencha o nosso número e envie de volta"><i class="bi bi-upload"></i> Atualizar pela planilha</a>'
-    . (usuarioTemPermissao('baixar_receber') ? '<a href="/receber/importar_banco.php" class="btn btn-outline-secondary"><i class="bi bi-file-earmark-spreadsheet"></i> Importar planilha do banco</a>' : '')
-    . '<a href="/receber/form.php" class="btn btn-outline-secondary"><i class="bi bi-plus-lg"></i> Lançamento avulso</a>'
+$pageAction = ''
     . '<a href="/operacoes/form.php" class="btn btn-brand"><i class="bi bi-calculator"></i> Nova operação</a>';
 require __DIR__ . '/../../includes/layout_header.php';
 ?>
@@ -327,13 +391,14 @@ require __DIR__ . '/../../includes/layout_header.php';
     </div>
 </div>
 <script>
-// Imprimir / Planilha: com títulos marcados, leva só eles (ids[] na URL).
-document.querySelectorAll('[data-com-selecao]').forEach((link) => link.addEventListener('click', () => {
-    const url = new URL(link.href, location.href);
+// Imprimir / Planilha: mesmos filtros da tela; com títulos marcados, só eles (ids[] na URL).
+function abrirComSelecao(params, novaAba) {
+    const url = new URL(location.href);
     url.searchParams.delete('ids[]');
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     document.querySelectorAll('.selecao-item:checked').forEach((c) => url.searchParams.append('ids[]', c.value));
-    link.href = url.toString();
-}));
+    if (novaAba) window.open(url.toString(), '_blank'); else location.href = url.toString();
+}
 // Registrar boleto: um (botão da linha) ou os marcados que precisam de boleto.
 function registrarBoletos(ids) {
     const linhas = ids.length === 1 ? 'o boleto deste título' : ids.length + ' boleto(s)';

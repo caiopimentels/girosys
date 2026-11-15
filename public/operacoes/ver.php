@@ -98,10 +98,151 @@ $pagCliente = pagamentoClienteOperacao($pdo, $op);
 $recebido = array_sum(array_map(fn ($t) => $t['status'] === 'recebido' ? (float) $t['valor_recebido'] : 0, $titulos));
 $podeExcluir = !array_filter(array_filter([...$titulos, $residual]), fn ($t) => $t['status'] === 'recebido' || $t['status'] === 'devolvido' || $t['vezes_devolvido'] > 0);
 
+// Borderô para imprimir / salvar em PDF: folha própria, sem o menu do sistema.
+if (isset($_GET['imprimir'])) {
+    $empresa = configuracao('empresa_nome_fantasia') ?: configuracao('empresa_razao_social') ?: nomeSistema();
+    $cnpjEmpresa = configuracao('empresa_cnpj');
+    $semana = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+    $diaSemana = fn ($d) => $semana[(int) date('w', strtotime($d))];
+    $fimDeSemana = fn ($d) => in_array((int) date('w', strtotime($d)), [0, 6], true);
+    $diferenca = (float) $op['saldo'];
+    ?>
+<!doctype html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8">
+    <title>Borderô #<?= (int) $op['id'] ?> · <?= e($op['cliente_nome']) ?> · <?= formatDate($op['data_base']) ?></title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Inter, system-ui, sans-serif; color: #1f2933; font-size: 11px; margin: 0; background: #fff; }
+        .folha { max-width: 1100px; margin: 0 auto; padding: 24px 28px; }
+        .topo { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1f7a4d; padding-bottom: 10px; }
+        .empresa { font-size: 15px; font-weight: 700; }
+        .sub { color: #6b7785; }
+        .titulo-doc { text-align: right; }
+        .titulo-doc h1 { font-size: 17px; margin: 0; letter-spacing: .04em; text-transform: uppercase; }
+        .info { display: grid; grid-template-columns: 2.2fr 1fr 1fr 1fr; gap: 0; margin: 14px 0 18px; border: 1px solid #dde3e8; border-radius: 6px; }
+        .info div { padding: 7px 12px; border-right: 1px solid #dde3e8; }
+        .info div:last-child { border-right: 0; }
+        .info span { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: #6b7785; }
+        .info strong { font-size: 13px; }
+        h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #1f7a4d; margin: 18px 0 6px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: #52606d; text-align: left; border-bottom: 1.5px solid #9aa5b1; padding: 5px 6px; white-space: nowrap; }
+        td { padding: 4px 6px; border-bottom: 1px solid #eef1f4; vertical-align: top; }
+        tbody tr:nth-child(even) td { background: #f7f9fa; }
+        .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .c { text-align: center; }
+        .mut { color: #6b7785; }
+        .fds { color: #b45309; }
+        tfoot td { font-weight: 700; border-top: 1.5px solid #9aa5b1; border-bottom: 0; background: #fff !important; padding-top: 6px; }
+        .verde { color: #1f7a4d; }
+        .vermelho { color: #b42318; }
+        .rodape { display: grid; grid-template-columns: 1fr 340px; gap: 28px; margin-top: 22px; align-items: start; }
+        .resumo { border: 1px solid #dde3e8; border-radius: 6px; padding: 8px 14px; }
+        .resumo div { display: flex; justify-content: space-between; padding: 4px 0; }
+        .resumo .total { border-top: 1.5px solid #9aa5b1; margin-top: 4px; padding-top: 7px; font-size: 14px; font-weight: 700; }
+        .assinaturas { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 54px; }
+        .assinaturas div { border-top: 1px solid #52606d; text-align: center; padding-top: 4px; color: #52606d; }
+        .obs { margin-top: 10px; color: #52606d; }
+        .botao { text-align: center; margin: 18px 0; }
+        .botao button { background: #1f7a4d; color: #fff; border: 0; border-radius: 6px; padding: 8px 18px; font: inherit; font-size: 13px; cursor: pointer; }
+        @media print { .botao { display: none; } .folha { padding: 0; max-width: none; } @page { size: A4 landscape; margin: 10mm; } tr { break-inside: avoid; } }
+    </style>
+</head>
+<body>
+<div class="folha">
+    <div class="topo">
+        <div>
+            <div class="empresa"><?= e($empresa) ?></div>
+            <div class="sub"><?= $cnpjEmpresa ? 'CNPJ ' . e(documentoFormatado($cnpjEmpresa)) . ' · ' : '' ?>Emitido em <?= date('d/m/Y H:i') ?></div>
+        </div>
+        <div class="titulo-doc"><h1>Borderô de desconto</h1><div class="sub">Operação nº <?= (int) $op['id'] ?></div></div>
+    </div>
+
+    <div class="info">
+        <div><span>Cliente</span><strong><?= e($op['cliente_nome']) ?></strong><?= $op['cliente_documento'] ? ' <span style="display:inline">· ' . e(documentoFormatado($op['cliente_documento'])) . '</span>' : '' ?></div>
+        <div><span>Data do cálculo</span><strong><?= formatDate($op['data_base']) ?></strong></div>
+        <div><span>Taxa</span><strong><?= formatPercent($op['taxa']) ?> a.m.</strong></div>
+        <div><span>Compensação</span><strong><?= (int) $op['dias_compensacao'] ?> dia(s)</strong></div>
+    </div>
+
+    <h2>Títulos descontados (<?= count($titulos) ?>)</h2>
+    <table>
+        <thead><tr><th>Pagador</th><th>Tipo</th><th>Banco</th><th>Nº doc</th><th class="n">Vencimento</th><th>Dia</th><th class="n">Dias</th><th class="n">Valor</th><th class="n">Juros</th><th class="n">Líquido</th></tr></thead>
+        <tbody>
+        <?php foreach ($titulos as $t): ?>
+            <tr>
+                <td><?= e($t['emitente_nome'] ?: $op['cliente_nome']) ?><?= $t['emitente_documento'] ? ' <span class="mut">' . e(documentoFormatado($t['emitente_documento'])) . '</span>' : '' ?></td>
+                <td><?= e(tipoTituloLabel($t['tipo'])) ?></td>
+                <td><?= e($t['banco_titulo']) ?></td>
+                <td><?= e($t['numero_titulo'] ?: $t['boleto_nosso_numero']) ?></td>
+                <td class="n"><?= formatDate($t['data_vencimento']) ?></td>
+                <td class="<?= $fimDeSemana($t['data_vencimento']) ? 'fds' : 'mut' ?>"><?= $diaSemana($t['data_vencimento']) ?></td>
+                <td class="n"><?= (int) $t['dias'] ?></td>
+                <td class="n"><?= formatMoney($t['valor']) ?></td>
+                <td class="n"><?= formatMoney($t['juros']) ?></td>
+                <td class="n"><strong><?= formatMoney($t['valor_liquido']) ?></strong></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+        <tfoot><tr><td colspan="7">Total dos títulos</td><td class="n"><?= formatMoney($op['total_bruto']) ?></td><td class="n"><?= formatMoney($op['total_juros']) ?></td><td class="n"><?= formatMoney($op['total_liquido']) ?></td></tr></tfoot>
+    </table>
+
+    <?php if ($usados): ?>
+    <h2>Repasses já feitos ao cliente (corrigidos até <?= formatDate($op['data_base']) ?>)</h2>
+    <table>
+        <thead><tr><th>Data</th><th>Descrição</th><th class="n">Dias</th><th class="n">Valor</th><th class="n">Juros</th><th class="n">Corrigido</th></tr></thead>
+        <tbody>
+        <?php foreach ($usados as $u): ?>
+            <tr>
+                <td class="n" style="text-align:left; width: 90px"><?= formatDate($u['data']) ?></td>
+                <td><?= e($u['descricao'] ?: 'Repasse') ?></td>
+                <td class="n"><?= (int) $u['dias'] ?></td>
+                <td class="n"><?= formatMoney($u['valor_usado']) ?></td>
+                <td class="n"><?= formatMoney($u['juros']) ?></td>
+                <td class="n"><strong><?= formatMoney($u['valor_usado'] + $u['juros']) ?></strong></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+        <tfoot><tr><td colspan="3">Total dos repasses</td><td class="n"><?= formatMoney($op['valor_emprestado']) ?></td><td class="n"><?= formatMoney($op['juros_emprestimo']) ?></td><td class="n"><?= formatMoney($op['emprestado_atualizado']) ?></td></tr></tfoot>
+    </table>
+    <?php endif; ?>
+
+    <div class="rodape">
+        <div>
+            <?php if ($op['observacao']): ?><div class="obs"><strong>Observação:</strong> <?= nl2br(e($op['observacao'])) ?></div><?php endif; ?>
+            <div class="assinaturas">
+                <div><?= e($op['cliente_nome']) ?></div>
+                <div><?= e($empresa) ?></div>
+            </div>
+        </div>
+        <div class="resumo">
+            <div><span>Valor dos títulos</span><span class="n"><?= formatMoney($op['total_bruto']) ?></span></div>
+            <div><span>(−) Juros / deságio</span><span class="n"><?= formatMoney($op['total_juros']) ?></span></div>
+            <div><span>Líquido dos títulos</span><span class="n"><strong><?= formatMoney($op['total_liquido']) ?></strong></span></div>
+            <?php if ($usados): ?><div><span>(−) Repasses corrigidos</span><span class="n"><?= formatMoney($op['emprestado_atualizado']) ?></span></div><?php endif; ?>
+            <div class="total"><span><?= $diferenca < 0 ? 'Cliente ainda deve' : 'A pagar ao cliente' ?></span><span class="n <?= $diferenca < 0 ? 'vermelho' : 'verde' ?>"><?= formatMoney(abs($diferenca)) ?></span></div>
+            <?php if ($pagCliente['imediato'] > 0): ?><div class="mut"><span>Pago em <?= formatDate($pagCliente['data_imediato']) ?></span><span class="n"><?= formatMoney($pagCliente['imediato']) ?></span></div><?php endif; ?>
+            <?php if ($pagCliente['desconto'] > 0): ?><div class="mut"><span>Arredondamento</span><span class="n"><?= formatMoney($pagCliente['desconto']) ?></span></div><?php endif; ?>
+            <?php if (($cp = $pagCliente['conta_pagar']) && $cp['status'] !== 'pago'): ?><div class="mut"><span>Agendado para <?= formatDate($cp['data_vencimento']) ?></span><span class="n"><?= formatMoney($pagCliente['falta']) ?></span></div><?php endif; ?>
+            <?php if ($diferenca < 0 && $residual): ?><div class="mut"><span>Vence em <?= formatDate($residual['data_vencimento']) ?></span><span></span></div><?php elseif ($diferenca < 0 && $sobra): ?><div class="mut"><span>Fica como saldo para a próxima operação</span><span></span></div><?php endif; ?>
+        </div>
+    </div>
+    <div class="botao"><button onclick="window.print()">Imprimir / salvar PDF</button></div>
+</div>
+<script>window.addEventListener('load', () => setTimeout(() => window.print(), 300));</script>
+</body>
+</html>
+    <?php
+    exit;
+}
+
 $pageTitle = 'Operação #' . $op['id'] . ' · ' . $op['cliente_nome'];
 $pageBreadcrumb = 'Operações · ' . formatDate($op['data_base']);
 $activeMenu = 'operacoes';
-$pageAction = '<button type="button" class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> Imprimir borderô</button>'
+$pageAction = '<a href="?id=' . (int) $op['id'] . '&imprimir=1" target="_blank" class="btn btn-outline-secondary"><i class="bi bi-printer"></i> Imprimir borderô</a>'
     . ($podeExcluir ? '<form method="post" class="d-inline" onsubmit="return confirm(\'Excluir a operação inteira? Os títulos saem de Contas a receber e os repasses voltam a ficar em aberto.\');"><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="' . (int) $op['id'] . '"><button class="btn btn-outline-danger"><i class="bi bi-trash"></i> Excluir</button></form>' : '')
     . '<a href="/operacoes/form.php?cliente=' . (int) $op['cliente_id'] . '" class="btn btn-brand"><i class="bi bi-plus-lg"></i> Nova operação deste cliente</a>';
 require __DIR__ . '/../../includes/layout_header.php';
