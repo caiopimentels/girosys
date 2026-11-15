@@ -175,7 +175,7 @@ require __DIR__ . '/../../includes/layout_header.php';
         <div class="secao">
             <div class="secao-titulo">
                 <span class="secao-numero">2</span> Títulos recebidos (cheques, boletos, promissórias, depósitos)
-                <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="btn-parcelas"><i class="bi bi-magic"></i> Calcular parcelas</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="btn-parcelas" title="Ex.: R$ 3.000 em 3x ou 30 60 90"><i class="bi bi-magic"></i> Lançar parcelas</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-add-titulo"><i class="bi bi-plus-lg"></i> Adicionar título</button>
             </div>
             <div class="card">
@@ -322,23 +322,25 @@ require __DIR__ . '/../../includes/layout_header.php';
 </div>
 </form>
 
-<?php // Calcular parcelas: acha o valor de cada título para os líquidos somarem o valor desejado (assets/js/operacao.js). ?>
+<?php // Calcular parcelas: divide um total em N títulos ou acha o valor de cada um para os líquidos somarem o desejado (assets/js/operacao.js). ?>
 <div class="modal fade" id="modal-parcelas" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title"><i class="bi bi-magic"></i> Calcular parcelas</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-header"><h5 class="modal-title"><i class="bi bi-magic"></i> Lançar parcelas</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body" id="painel-parcelas">
-                <p class="small text-muted">Quanto o cliente precisa cobrir (líquido) e em quantas parcelas: o sistema acha o valor de cada título, já descontados os juros de cada prazo pela taxa da operação.</p>
+                <div class="btn-group w-100 mb-3" role="group">
+                    <input type="radio" class="btn-check" name="parc-modo" id="parc-modo-total" value="total" checked><label class="btn btn-outline-secondary" for="parc-modo-total">Dividir o total dos títulos</label>
+                    <input type="radio" class="btn-check" name="parc-modo" id="parc-modo-liquido" value="liquido"><label class="btn btn-outline-secondary" for="parc-modo-liquido">Calcular pelo líquido desejado</label>
+                </div>
+                <p class="small text-muted" id="parc-explica"></p>
                 <div class="row g-3">
-                    <div class="col-md-5"><label class="form-label">Líquido desejado (R$)</label><input type="text" class="form-control" id="parc-alvo" data-moeda inputmode="decimal"><div class="form-text" id="parc-alvo-ajuda"></div></div>
-                    <div class="col-md-3"><label class="form-label">Parcelas</label><input type="number" class="form-control" id="parc-qtd" min="1" max="360" value="3"></div>
-                    <div class="col-md-4"><label class="form-label">1º vencimento</label><input type="date" class="form-control" id="parc-venc"></div>
-                    <div class="col-md-5"><label class="form-label">Intervalo entre as parcelas</label>
-                        <select class="form-select" id="parc-intervalo"><option value="mes">Mensal (mesmo dia do mês)</option><option value="dias">A cada X dias</option></select></div>
-                    <div class="col-md-3" id="bloco-parc-dias"><label class="form-label">Dias</label><input type="number" class="form-control" id="parc-dias" min="1" max="365" value="30"></div>
+                    <div class="col-md-5"><label class="form-label" id="parc-alvo-rotulo">Valor total (R$)</label><input type="text" class="form-control" id="parc-alvo" data-moeda inputmode="decimal"><div class="form-text" id="parc-alvo-ajuda"></div></div>
+                    <div class="col-md-3"><label class="form-label">Condição</label><input type="text" class="form-control" id="parc-condicao" value="3x" placeholder="3x ou 30 60 90" autocomplete="off">
+                        <div class="form-text"><code>3x</code> = mensal · <code>30 60 90</code> = dias da data base</div></div>
+                    <div class="col-md-4" id="bloco-parc-venc"><label class="form-label">1º vencimento</label><input type="date" class="form-control" id="parc-venc"></div>
                     <div class="col-md-4"><label class="form-label">Tipo</label>
                         <select class="form-select" id="parc-tipo"><?php foreach (tiposTitulo() as $k => $v): ?><option value="<?= e($k) ?>"><?= e($v) ?></option><?php endforeach; ?></select></div>
-                    <div class="col-md-5"><label class="form-label">Arredondar para cima</label>
+                    <div class="col-md-4" id="bloco-parc-arred"><label class="form-label">Arredondar para cima</label>
                         <select class="form-select" id="parc-arred"><option value="0.01">Centavos</option><option value="1">R$ 1</option><option value="10">R$ 10</option></select></div>
                 </div>
                 <div class="mt-3 p-2 rounded bg-body-tertiary small" id="parc-previa"></div>

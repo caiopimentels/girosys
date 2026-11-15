@@ -383,15 +383,18 @@
     document.querySelectorAll('[name="residual_modo"]').forEach((r) => r.addEventListener('change', recalcular));
     $('#btn-add-titulo').addEventListener('click', () => campo(adicionarTitulo(), 'vencimento').focus());
 
-    // ---------------- Calcular parcelas ----------------
-    // Valor de face igual em todas as parcelas, de modo que a soma dos
-    // líquidos (valor − juros de cada prazo) dê o líquido desejado:
-    //   valor = líquido ÷ Σ(1 − taxa/30 × dias da parcela)
-    // arredondado para cima (centavos, R$ 1 ou R$ 10), nunca abaixo da meta.
+    // ---------------- Lançar parcelas ----------------
+    // Condição "3x" (mensal a partir do 1º vencimento) ou "30 60 90" (dias
+    // contados da data base). Dois modos:
+    //   total   — divide o valor entre as parcelas; os centavos que sobram
+    //             vão na 1ª (3.000,00 em 3x = 1.000,00 cada; 100,00 = 33,34 + 33,33 + 33,33);
+    //   líquido — valor de face igual, de modo que a soma dos líquidos dê o
+    //             desejado: valor = líquido ÷ Σ(1 − taxa/30 × dias), arredondado para cima.
     const painelParc = $('#painel-parcelas');
     const modalParc = new bootstrap.Modal($('#modal-parcelas'));
     const campoAlvo = $('#parc-alvo');
     let alvoDigitado = false;
+    const modoParc = () => $('input[name="parc-modo"]:checked').value;
 
     function somarMesesIso(data, meses) {
         const [a, m, d] = data.split('-').map(Number);
@@ -399,19 +402,39 @@
         return new Date(Date.UTC(a, m - 1 + meses, Math.min(d, ultimo))).toISOString().slice(0, 10);
     }
 
+    /**
+     * "3x" → {n: 3}; "30 60 90", "30/60/90", "30,60,90" → {prazos: [30, 60, 90]}.
+     * Número sozinho sem x: até 24 é quantidade de parcelas, acima são dias ("45").
+     */
+    function lerCondicao(texto) {
+        const t = texto.trim().toLowerCase();
+        const m = t.match(/^(\d{1,3})\s*(x?)$/);
+        if (m && (m[2] === 'x' || Number(m[1]) <= 24)) return { n: Number(m[1]) };
+        const prazos = t.split(/[\s\/,;+\-]+/).filter(Boolean).map(Number);
+        if (prazos.length && prazos.every((d) => Number.isInteger(d) && d >= 0 && d <= 3650)) return { prazos };
+        return null;
+    }
+
     function calcularParcelas() {
         const alvo = Moeda.ler(campoAlvo.value);
-        const n = parseInt($('#parc-qtd').value, 10) || 0;
+        const cond = lerCondicao($('#parc-condicao').value);
+        const base = $('#data_base').value;
+        if (!cond) return { erro: 'Condição: use 3x ou os prazos em dias, como 30 60 90.' };
+        const n = cond.n ?? cond.prazos.length;
         if (n < 1 || n > 360) return { erro: 'Parcelas: de 1 a 360.' };
         const primeiro = $('#parc-venc').value;
-        const base = $('#data_base').value;
+        if (!alvo || !base || (cond.n && !primeiro)) return { erro: 'Informe o valor' + (cond.n ? ' e o 1º vencimento.' : '.') };
+        const vencs = cond.n ? [...Array(n)].map((_, i) => somarMesesIso(primeiro, i)) : cond.prazos.map((d) => somarDias(base, d));
+
+        if (modoParc() === 'total') {
+            const cada = Math.floor(alvo / n * 100 + 1e-6) / 100;
+            const valores = vencs.map((_, i) => (i === 0 ? arred(alvo - cada * (n - 1)) : cada));
+            return { n, valores, vencs, bruto: alvo };
+        }
+
         const taxa = taxaAtual();
         const comp = Math.max(0, parseInt($('#dias_compensacao').value, 10) || 0);
         const passo = Number($('#parc-arred').value);
-        if (!alvo || !primeiro || !base) return { erro: 'Informe o líquido desejado e o 1º vencimento.' };
-
-        const intervaloDias = Math.max(1, parseInt($('#parc-dias').value, 10) || 30);
-        const vencs = [...Array(n)].map((_, i) => ($('#parc-intervalo').value === 'mes' ? somarMesesIso(primeiro, i) : somarDias(primeiro, intervaloDias * i)));
         const dias = vencs.map((v) => Math.max(0, diasEntre(base, v) + comp));
         const somaFatores = dias.reduce((s, d) => s + (1 - taxa / 100 / 30 * d), 0);
         if (somaFatores <= 0) return { erro: 'Com essa taxa e esses prazos os juros passam do valor do título.' };
@@ -421,28 +444,39 @@
         for (let i = 0; i < 1000 && liquidoDe(valor) < alvo - 0.004; i++) valor = arred(valor + passo); // centavos dos juros
         valor = arred(valor);
         const liquido = arred(liquidoDe(valor));
-        return { n, valor, vencs, alvo, bruto: arred(valor * n), liquido, sobra: arred(liquido - alvo) };
+        return { n, valores: vencs.map(() => valor), vencs, alvo, bruto: arred(valor * n), liquido, sobra: arred(liquido - alvo) };
     }
 
     const dataBr = (iso) => iso.split('-').reverse().join('/');
 
     function mostrarPrevia() {
-        $('#bloco-parc-dias').style.display = $('#parc-intervalo').value === 'dias' ? '' : 'none';
+        const total = modoParc() === 'total';
+        const cond = lerCondicao($('#parc-condicao').value);
+        $('#bloco-parc-venc').style.display = cond && cond.prazos ? 'none' : '';
+        $('#bloco-parc-arred').style.display = total ? 'none' : '';
+        $('#parc-alvo-rotulo').textContent = total ? 'Valor total (R$)' : 'Líquido desejado (R$)';
+        $('#parc-explica').textContent = total
+            ? 'O valor é dividido igualmente entre as parcelas (centavos que sobram ficam na 1ª). Os juros de cada prazo saem da tabela, como sempre.'
+            : 'Quanto o cliente precisa cobrir (líquido): o sistema acha o valor de cada título, já descontados os juros de cada prazo pela taxa da operação.';
+        $('#parc-alvo-ajuda').textContent = total ? '' : (repassesCorrigidos > 0 ? 'Repasses marcados, corrigidos até a data base: ' + reais(repassesCorrigidos) : 'Nenhum repasse marcado: digite o valor.');
         const r = calcularParcelas();
         $('#parc-vencs').textContent = r.erro ? '' : 'Vencimentos: ' + r.vencs.map(dataBr).join(', ');
+        const iguais = !r.erro && r.valores.every((v) => Math.abs(v - r.valores[0]) < 0.005);
         $('#parc-previa').innerHTML = r.erro ? `<span class="text-danger">${escapar(r.erro)}</span>`
-            : `<strong>${r.n} × ${reais(r.valor)}</strong> = bruto ${reais(r.bruto)} · líquido <strong>${reais(r.liquido)}</strong>`
-              + (r.sobra > 0.004 ? ` <span class="text-muted">(${reais(r.sobra)} acima do desejado, pelo arredondamento)</span>` : '');
+            : `<strong>${iguais ? r.n + ' × ' + reais(r.valores[0]) : r.valores.map(reais).join(' + ')}</strong> = ${total ? 'total' : 'bruto'} ${reais(r.bruto)}`
+              + (total ? '' : ` · líquido <strong>${reais(r.liquido)}</strong>` + (r.sobra > 0.004 ? ` <span class="text-muted">(${reais(r.sobra)} acima do desejado, pelo arredondamento)</span>` : ''));
         return r;
     }
 
     $('#btn-parcelas').addEventListener('click', () => {
-        if (!alvoDigitado && repassesCorrigidos > 0) campoAlvo.value = Moeda.formatar(repassesCorrigidos);
-        $('#parc-alvo-ajuda').textContent = repassesCorrigidos > 0 ? 'Repasses marcados, corrigidos até a data base: ' + reais(repassesCorrigidos) : 'Nenhum repasse marcado: digite o valor.';
+        if (!alvoDigitado && modoParc() === 'liquido' && repassesCorrigidos > 0) campoAlvo.value = Moeda.formatar(repassesCorrigidos);
         if (!$('#parc-venc').value && $('#data_base').value) $('#parc-venc').value = somarMesesIso($('#data_base').value, 1);
         mostrarPrevia();
         modalParc.show();
     });
+    painelParc.querySelectorAll('input[name="parc-modo"]').forEach((r) => r.addEventListener('change', () => {
+        if (!alvoDigitado) campoAlvo.value = modoParc() === 'liquido' && repassesCorrigidos > 0 ? Moeda.formatar(repassesCorrigidos) : '';
+    }));
     $('#modal-parcelas').addEventListener('shown.bs.modal', () => campoAlvo.focus());
     campoAlvo.addEventListener('input', () => (alvoDigitado = true));
     painelParc.addEventListener('input', mostrarPrevia);
@@ -451,14 +485,14 @@
 
     $('#parc-gerar').addEventListener('click', () => {
         const r = mostrarPrevia();
-        if (r.erro) { (Moeda.ler(campoAlvo.value) ? $('#parc-venc') : campoAlvo).focus(); return; }
+        if (r.erro) { (Moeda.ler(campoAlvo.value) ? $('#parc-condicao') : campoAlvo).focus(); return; }
         const preenchidos = titulos().filter((tb) => Moeda.ler(campo(tb, 'valor').value) > 0);
         if (preenchidos.length && !confirm('Substituir os ' + preenchidos.length + ' título(s) já lançados pelas ' + r.n + ' parcelas?')) return;
         // Mantém pagador, banco e conta do primeiro título lançado (cheques do mesmo emitente).
         const modelo = titulos()[0];
         const copiar = modelo ? ['emitente_nome', 'emitente_documento', 'banco_titulo', 'conta_destino_id'].reduce((o, k) => (campo(modelo, k).value ? { ...o, [k]: campo(modelo, k).value } : o), {}) : {};
         titulos().forEach((tb) => tb.remove());
-        r.vencs.forEach((venc) => adicionarTitulo({ ...copiar, tipo: $('#parc-tipo').value, vencimento: venc, valor: r.valor }));
+        r.vencs.forEach((venc, i) => adicionarTitulo({ ...copiar, tipo: $('#parc-tipo').value, vencimento: venc, valor: r.valores[i] }));
         modalParc.hide();
         recalcular();
         $('#tabela-titulos').scrollIntoView({ behavior: 'smooth', block: 'center' });
