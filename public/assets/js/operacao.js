@@ -12,6 +12,7 @@
     let clienteAtual = null; // resposta de /pessoas/info.php
     let taxaDigitada = estado.taxa !== '';
     let repassesCorrigidos = 0; // repasses marcados, corrigidos até a data base (para o cálculo de parcelas)
+    let liquidoTitulos = 0; // líquido dos títulos já na tabela (o lote seguinte cobre o que falta)
     // Despesas a deixar marcadas quando a lista do cliente chegar: id => valor usado.
     let marcarAoCarregar = new Map(estado.adiantamentos.map((a) => [String(a.id), a.valor_usado]));
 
@@ -326,6 +327,7 @@
         });
 
         repassesCorrigidos = corrigido;
+        liquidoTitulos = liquido;
         const saldo = arred(liquido - corrigido);
         const set = (id, v) => ($('#' + id).textContent = reais(v));
         set('tot-bruto', bruto); set('tot-juros', totJuros); set('tot-liquido', liquido);
@@ -396,6 +398,11 @@
     const campoAlvo = $('#parc-alvo');
     let alvoDigitado = false;
     const modoParc = () => $('input[name="parc-modo"]:checked').value;
+    // Líquido sugerido: o que falta dos repasses marcados, descontado o que os títulos já lançados cobrem.
+    const liquidoSugerido = () => arred(Math.max(0, repassesCorrigidos - ($('#parc-substituir').checked ? 0 : liquidoTitulos)));
+    function sugerirLiquido() {
+        if (!alvoDigitado && modoParc() === 'liquido') campoAlvo.value = liquidoSugerido() > 0 ? Moeda.formatar(liquidoSugerido()) : '';
+    }
 
     function somarMesesIso(data, meses) {
         const [a, m, d] = data.split('-').map(Number);
@@ -459,11 +466,11 @@
         $('#parc-explica').textContent = total
             ? 'O valor é dividido igualmente entre as parcelas (centavos que sobram ficam na 1ª). Os juros de cada prazo saem da tabela, como sempre.'
             : 'Quanto o cliente precisa cobrir (líquido): o sistema acha o valor de cada título, já descontados os juros de cada prazo pela taxa da operação.';
-        $('#parc-alvo-ajuda').textContent = total ? '' : (repassesCorrigidos > 0 ? 'Repasses marcados, corrigidos até a data base: ' + reais(repassesCorrigidos) : 'Nenhum repasse marcado: digite o valor.');
-        if (!total && !alvoDigitado && repassesCorrigidos > 0) campoAlvo.value = Moeda.formatar(repassesCorrigidos);
+        $('#parc-alvo-ajuda').textContent = total ? '' : (repassesCorrigidos > 0 ? 'Repasses marcados, corrigidos: ' + reais(repassesCorrigidos) + (liquidoTitulos > 0 && !$('#parc-substituir').checked ? ' · já cobertos pelos títulos lançados: ' + reais(liquidoTitulos) + ' · falta ' + reais(liquidoSugerido()) : '') : 'Nenhum repasse marcado: digite o valor.');
+        sugerirLiquido();
         const lancados = titulos().filter((tb) => Moeda.ler(campo(tb, 'valor').value) > 0).length;
-        $('#parc-substitui').classList.toggle('d-none', !lancados);
-        $('#parc-substitui').innerHTML = lancados ? `<i class="bi bi-arrow-repeat"></i> Os <strong>${lancados} título(s)</strong> já lançados na tabela serão <strong>substituídos</strong> por estas parcelas.` : '';
+        $('#bloco-parc-substituir').classList.toggle('d-none', !lancados);
+        $('#parc-substitui').innerHTML = `As parcelas são <strong>acrescentadas</strong> aos ${lancados} título(s) já lançados. Marque para <strong>apagar</strong> os já lançados e ficar só com estas.`;
         const r = calcularParcelas();
         $('#parc-vencs').textContent = r.erro ? '' : 'Vencimentos: ' + r.vencs.map(dataBr).join(', ');
         const iguais = !r.erro && r.valores.every((v) => Math.abs(v - r.valores[0]) < 0.005);
@@ -473,27 +480,31 @@
         return r;
     }
 
-    // Cliente e pagador na própria janela: o cliente é o mesmo campo do topo
-    // da operação (taxa e repasses vêm dele); o pagador vai em todas as parcelas.
-    const parcCliente = $('#parc-cliente');
+    // Pagador das parcelas: cada lote pode ser de um pagador diferente (3
+    // boletos de um, 10 de outro) — as parcelas entram somadas na tabela.
     const parcPagador = $('#parc-pagador');
-    parcCliente.addEventListener('change', () => {
-        if (campoCliente.value === parcCliente.value) return;
-        campoCliente.value = parcCliente.value;
-        campoCliente.dispatchEvent(new Event('change', { bubbles: true }));
+    const parcDocumento = $('#parc-documento');
+    parcPagador.addEventListener('change', () => {
+        parcDocumento.value = '';
+        const nome = parcPagador.value.trim();
+        if (!nome) return;
+        fetch('/pessoas/info.php?' + new URLSearchParams({ nome, papel: 'pagador' }), ajax)
+            .then((r) => r.json()).then((d) => { if (d.encontrado && d.documento && !parcDocumento.value) parcDocumento.value = d.documento; }).catch(() => {});
     });
 
     $('#btn-parcelas').addEventListener('click', () => {
-        parcCliente.value = campoCliente.value;
-        const primeiro = titulos()[0];
-        parcPagador.value = primeiro ? campo(primeiro, 'emitente_nome').value : '';
-        if (!alvoDigitado && modoParc() === 'liquido' && repassesCorrigidos > 0) campoAlvo.value = Moeda.formatar(repassesCorrigidos);
+        parcPagador.value = '';
+        parcDocumento.value = '';
+        $('#parc-substituir').checked = false;
+        alvoDigitado = false;
+        campoAlvo.value = '';
         if (!$('#parc-venc').value && $('#data_base').value) $('#parc-venc').value = somarMesesIso($('#data_base').value, 1);
         mostrarPrevia();
         modalParc.show();
     });
     painelParc.querySelectorAll('input[name="parc-modo"]').forEach((r) => r.addEventListener('change', () => {
-        if (!alvoDigitado) campoAlvo.value = modoParc() === 'liquido' && repassesCorrigidos > 0 ? Moeda.formatar(repassesCorrigidos) : '';
+        if (!alvoDigitado) campoAlvo.value = '';
+        sugerirLiquido();
     }));
     $('#modal-parcelas').addEventListener('shown.bs.modal', () => campoAlvo.focus());
     campoAlvo.addEventListener('input', () => (alvoDigitado = true));
@@ -504,15 +515,16 @@
     $('#parc-gerar').addEventListener('click', () => {
         const r = mostrarPrevia();
         if (r.erro) { (Moeda.ler(campoAlvo.value) ? $('#parc-condicao') : campoAlvo).focus(); return; }
-        // Substitui o que está na tabela (o aviso aparece na janela). Mantém
-        // banco, conta e documento do primeiro título se o pagador é o mesmo.
-        const modelo = titulos()[0];
+        // Acrescenta as parcelas; títulos vazios (sem valor) saem, e os já
+        // lançados só saem se marcou para substituir. Banco do pagador vem de
+        // outro título dele já na tabela.
         const pagador = parcPagador.value.trim();
-        const mesmoPagador = modelo && campo(modelo, 'emitente_nome').value.trim() === pagador;
-        const copiar = modelo ? ['banco_titulo', 'conta_destino_id', ...(mesmoPagador ? ['emitente_documento'] : [])]
-            .reduce((o, k) => (campo(modelo, k).value ? { ...o, [k]: campo(modelo, k).value } : o), {}) : {};
-        if (pagador) copiar.emitente_nome = pagador;
-        titulos().forEach((tb) => tb.remove());
+        const doMesmo = titulos().find((tb) => Moeda.ler(campo(tb, 'valor').value) > 0 && campo(tb, 'emitente_nome').value.trim().toLowerCase() === pagador.toLowerCase());
+        const copiar = { emitente_nome: pagador, emitente_documento: parcDocumento.value.trim() || (doMesmo ? campo(doMesmo, 'emitente_documento').value : ''),
+            banco_titulo: doMesmo ? campo(doMesmo, 'banco_titulo').value : '' };
+        if (doMesmo) copiar.conta_destino_id = campo(doMesmo, 'conta_destino_id').value;
+        const substituir = $('#parc-substituir').checked;
+        titulos().forEach((tb) => { if (substituir || !(Moeda.ler(campo(tb, 'valor').value) > 0)) tb.remove(); });
         r.vencs.forEach((venc, i) => adicionarTitulo({ ...copiar, tipo: $('#parc-tipo').value, vencimento: venc, valor: r.valores[i] }));
         modalParc.hide();
         recalcular();

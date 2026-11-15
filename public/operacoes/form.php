@@ -334,11 +334,10 @@ require __DIR__ . '/../../includes/layout_header.php';
                 </div>
                 <p class="small text-muted" id="parc-explica"></p>
                 <div class="row g-3">
-                    <div class="col-md-6"><label class="form-label">Cliente da operação</label>
-                        <input type="text" class="form-control" id="parc-cliente" data-busca-pessoa="cliente" autocomplete="off-busca" placeholder="quem está descontando">
-                        <div class="form-text">Define a taxa e os repasses da operação.</div></div>
-                    <div class="col-md-6"><label class="form-label">Pagador dos títulos</label>
+                    <div class="col-md-8"><label class="form-label">Pagador dos títulos</label>
                         <input type="text" class="form-control" id="parc-pagador" data-busca-pessoa="pagador" autocomplete="off-busca" placeholder="em branco = cheque do próprio cliente"></div>
+                    <div class="col-md-4"><label class="form-label">CPF/CNPJ</label>
+                        <input type="text" class="form-control" id="parc-documento" inputmode="numeric" autocomplete="off-busca"></div>
                     <div class="col-md-5"><label class="form-label" id="parc-alvo-rotulo">Valor total (R$)</label><input type="text" class="form-control" id="parc-alvo" data-moeda inputmode="decimal"><div class="form-text" id="parc-alvo-ajuda"></div></div>
                     <div class="col-md-3"><label class="form-label">Condição</label><input type="text" class="form-control" id="parc-condicao" value="3x" placeholder="3x ou 30 60 90" autocomplete="off">
                         <div class="form-text"><code>3x</code> = mensal · <code>30 60 90</code> = dias da data base</div></div>
@@ -348,7 +347,10 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <div class="col-md-4" id="bloco-parc-arred"><label class="form-label">Arredondar para cima</label>
                         <select class="form-select" id="parc-arred"><option value="0.01">Centavos</option><option value="1">R$ 1</option><option value="10">R$ 10</option></select></div>
                 </div>
-                <div class="alert alert-warning small py-2 mt-3 mb-0 d-none" id="parc-substitui"></div>
+                <div class="form-check mt-3 d-none" id="bloco-parc-substituir">
+                    <input class="form-check-input" type="checkbox" id="parc-substituir">
+                    <label class="form-check-label small" for="parc-substituir" id="parc-substitui"></label>
+                </div>
                 <div class="mt-3 p-2 rounded bg-body-tertiary small" id="parc-previa"></div>
                 <div class="small text-muted mt-2" id="parc-vencs"></div>
             </div>
