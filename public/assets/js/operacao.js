@@ -290,6 +290,7 @@
 
     // ---------------- Cálculo ----------------
     function recalcular() {
+        if ($('#modal-parcelas').classList.contains('show')) setTimeout(mostrarPrevia);
         const base = $('#data_base').value;
         const taxa = taxaAtual();
         const comp = Math.max(0, parseInt($('#dias_compensacao').value, 10) || 0);
@@ -459,6 +460,10 @@
             ? 'O valor é dividido igualmente entre as parcelas (centavos que sobram ficam na 1ª). Os juros de cada prazo saem da tabela, como sempre.'
             : 'Quanto o cliente precisa cobrir (líquido): o sistema acha o valor de cada título, já descontados os juros de cada prazo pela taxa da operação.';
         $('#parc-alvo-ajuda').textContent = total ? '' : (repassesCorrigidos > 0 ? 'Repasses marcados, corrigidos até a data base: ' + reais(repassesCorrigidos) : 'Nenhum repasse marcado: digite o valor.');
+        if (!total && !alvoDigitado && repassesCorrigidos > 0) campoAlvo.value = Moeda.formatar(repassesCorrigidos);
+        const lancados = titulos().filter((tb) => Moeda.ler(campo(tb, 'valor').value) > 0).length;
+        $('#parc-substitui').classList.toggle('d-none', !lancados);
+        $('#parc-substitui').innerHTML = lancados ? `<i class="bi bi-arrow-repeat"></i> Os <strong>${lancados} título(s)</strong> já lançados na tabela serão <strong>substituídos</strong> por estas parcelas.` : '';
         const r = calcularParcelas();
         $('#parc-vencs').textContent = r.erro ? '' : 'Vencimentos: ' + r.vencs.map(dataBr).join(', ');
         const iguais = !r.erro && r.valores.every((v) => Math.abs(v - r.valores[0]) < 0.005);
@@ -468,7 +473,20 @@
         return r;
     }
 
+    // Cliente e pagador na própria janela: o cliente é o mesmo campo do topo
+    // da operação (taxa e repasses vêm dele); o pagador vai em todas as parcelas.
+    const parcCliente = $('#parc-cliente');
+    const parcPagador = $('#parc-pagador');
+    parcCliente.addEventListener('change', () => {
+        if (campoCliente.value === parcCliente.value) return;
+        campoCliente.value = parcCliente.value;
+        campoCliente.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
     $('#btn-parcelas').addEventListener('click', () => {
+        parcCliente.value = campoCliente.value;
+        const primeiro = titulos()[0];
+        parcPagador.value = primeiro ? campo(primeiro, 'emitente_nome').value : '';
         if (!alvoDigitado && modoParc() === 'liquido' && repassesCorrigidos > 0) campoAlvo.value = Moeda.formatar(repassesCorrigidos);
         if (!$('#parc-venc').value && $('#data_base').value) $('#parc-venc').value = somarMesesIso($('#data_base').value, 1);
         mostrarPrevia();
@@ -486,11 +504,14 @@
     $('#parc-gerar').addEventListener('click', () => {
         const r = mostrarPrevia();
         if (r.erro) { (Moeda.ler(campoAlvo.value) ? $('#parc-condicao') : campoAlvo).focus(); return; }
-        const preenchidos = titulos().filter((tb) => Moeda.ler(campo(tb, 'valor').value) > 0);
-        if (preenchidos.length && !confirm('Substituir os ' + preenchidos.length + ' título(s) já lançados pelas ' + r.n + ' parcelas?')) return;
-        // Mantém pagador, banco e conta do primeiro título lançado (cheques do mesmo emitente).
+        // Substitui o que está na tabela (o aviso aparece na janela). Mantém
+        // banco, conta e documento do primeiro título se o pagador é o mesmo.
         const modelo = titulos()[0];
-        const copiar = modelo ? ['emitente_nome', 'emitente_documento', 'banco_titulo', 'conta_destino_id'].reduce((o, k) => (campo(modelo, k).value ? { ...o, [k]: campo(modelo, k).value } : o), {}) : {};
+        const pagador = parcPagador.value.trim();
+        const mesmoPagador = modelo && campo(modelo, 'emitente_nome').value.trim() === pagador;
+        const copiar = modelo ? ['banco_titulo', 'conta_destino_id', ...(mesmoPagador ? ['emitente_documento'] : [])]
+            .reduce((o, k) => (campo(modelo, k).value ? { ...o, [k]: campo(modelo, k).value } : o), {}) : {};
+        if (pagador) copiar.emitente_nome = pagador;
         titulos().forEach((tb) => tb.remove());
         r.vencs.forEach((venc, i) => adicionarTitulo({ ...copiar, tipo: $('#parc-tipo').value, vencimento: venc, valor: r.valores[i] }));
         modalParc.hide();
