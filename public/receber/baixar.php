@@ -191,7 +191,18 @@ $pageAction = '<a href="/receber/listar.php" class="btn btn-outline-secondary"><
 require __DIR__ . '/../../includes/layout_header.php';
 ?>
 
-<div style="max-width: 900px;">
+<?php // Dois modos: ver (padrão) e editar (botão Editar ou ?editar=1) — editando, só o formulário aparece. ?>
+<style>
+    #detalhe-titulo:not(.editando) .so-editar, #detalhe-titulo.editando .so-ver { display: none !important; }
+</style>
+<script>
+function modoEdicaoTitulo(editar) {
+    const box = document.getElementById('detalhe-titulo');
+    box.classList.toggle('editando', editar);
+    if (editar) { box.querySelector('#editar-titulo [name=valor]').focus(); } else { box.querySelector('#editar-titulo form').reset(); }
+}
+</script>
+<div style="max-width: 900px;" id="detalhe-titulo" class="<?= !empty($_GET['editar']) && $podeMexer ? 'editando' : '' ?>">
     <?php // Em cima: o que é o título. ?>
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
         <?= badgeStatusAtraso($status, $atualizacao['dias']) ?>
@@ -199,13 +210,15 @@ require __DIR__ . '/../../includes/layout_header.php';
         <?php if ($t['operacao_id']): ?><a href="/operacoes/ver.php?id=<?= (int) $t['operacao_id'] ?>" class="small">operação #<?= (int) $t['operacao_id'] ?></a><?php endif; ?>
         <span class="ms-auto d-flex gap-2">
             <?php if ($podeMexer): ?>
-                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="const d = document.getElementById('editar-titulo'); d.classList.toggle('d-none'); if (!d.classList.contains('d-none')) { d.scrollIntoView({block: 'nearest'}); d.querySelector('[name=descricao]').focus(); }"><i class="bi bi-pencil"></i> Editar</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary so-ver" onclick="modoEdicaoTitulo(true)"><i class="bi bi-pencil"></i> Editar</button>
+                <span class="so-editar small fw-semibold text-muted align-self-center"><i class="bi bi-pencil"></i> Editando o título</span>
             <?php endif; ?>
             <?php if ($podeExcluir): ?>
-                <form method="post" class="d-inline" onsubmit="return confirm('Excluir este título?<?= $t['operacao_id'] && !$ehResidual ? ' Os totais da operação serão recalculados.' : '' ?>');"><input type="hidden" name="acao" value="excluir"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Excluir</button></form>
+                <form method="post" class="d-inline so-ver" onsubmit="return confirm('Excluir este título?<?= $t['operacao_id'] && !$ehResidual ? ' Os totais da operação serão recalculados.' : '' ?>');"><input type="hidden" name="acao" value="excluir"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Excluir</button></form>
             <?php endif; ?>
         </span>
     </div>
+    <div class="so-ver">
     <div class="row g-2 mb-2">
         <div class="col-6 col-md-3"><div class="kpi-rotulo">Valor</div><div class="fw-semibold text-num"><?= formatMoney($t['valor']) ?></div></div>
         <div class="col-6 col-md-3"><div class="kpi-rotulo">Vencimento</div><div class="fw-semibold <?= $status === 'vencido' ? 'valor-negativo' : '' ?>"><?= formatDate($t['data_vencimento']) ?></div></div>
@@ -232,7 +245,7 @@ require __DIR__ . '/../../includes/layout_header.php';
     <div class="alert alert-danger py-2 small" id="memorial-calculo" data-origem="<?= e($atualizacao['origem']) ?>"><?= memorialAtualizacao($t, $atualizacao, 'hoje') ?></div>
     <?php endif; ?>
 
-    <?php if ($historico && $historico['total'] > 0): ?>
+    <?php if ($historico && $historico['em_dia'] + $historico['com_atraso'] + $historico['devolvidos'] + $historico['vencidos'] > 0): ?>
     <div class="card mb-3"><div class="card-body py-2 d-flex flex-wrap gap-3 align-items-center small">
         <span class="text-muted">Como <?= e($t['emitente_nome']) ?> paga:</span> <?= badgeClassificacao($historico['classificacao']) ?>
         <span><strong><?= $historico['total'] ?></strong> título(s)</span>
@@ -308,10 +321,11 @@ require __DIR__ . '/../../includes/layout_header.php';
     </div></div>
     <?php endif; ?>
 
+    </div><?php // fim .so-ver de cima ?>
+
     <?php if ($podeMexer): ?>
-    <div class="card mb-3 <?= !empty($_GET['editar']) ? '' : 'd-none' ?>" id="editar-titulo">
+    <div class="card mb-3 so-editar" id="editar-titulo">
         <div class="card-body">
-            <div class="secao-titulo mb-2"><i class="bi bi-pencil"></i> Editar título</div>
             <form method="post">
                 <input type="hidden" name="acao" value="alterar">
                 <div class="row g-2">
@@ -348,13 +362,14 @@ require __DIR__ . '/../../includes/layout_header.php';
                     <div class="col-md-6"></div>
                     <div class="col-12"><label class="form-label small">Observação</label><textarea name="observacao" class="form-control" rows="2"><?= e($t['observacao']) ?></textarea></div>
                     <?php if ($t['operacao_id'] && !$ehResidual): ?><div class="col-12 form-text">Mudando valor ou vencimento, os juros deste título e os totais da operação são recalculados.</div><?php endif; ?>
-                    <div class="col-12 text-end"><button class="btn btn-sm btn-brand"><i class="bi bi-check-lg"></i> Salvar alterações</button></div>
+                    <div class="col-12 d-flex justify-content-end gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" onclick="modoEdicaoTitulo(false)">Cancelar</button><button class="btn btn-sm btn-brand"><i class="bi bi-check-lg"></i> Salvar alterações</button></div>
                 </div>
             </form>
         </div>
     </div>
     <?php endif; ?>
 
+    <div class="so-ver">
     <?php // Embaixo: o recebimento. ?>
     <?php if (in_array($t['status'], ['pendente', 'devolvido'], true)): ?>
     <div class="secao">
@@ -473,6 +488,7 @@ require __DIR__ . '/../../includes/layout_header.php';
     <?php elseif ($t['status'] === 'cancelado'): ?>
         <form method="post"><input type="hidden" name="acao" value="reabrir"><button class="btn btn-outline-secondary">Reabrir lançamento</button></form>
     <?php endif; ?>
+    </div><?php // fim .so-ver de baixo ?>
 </div>
 <?php if ($podeMexer): ?><?= buscaPessoas($pdo) ?><?php endif; ?>
 
