@@ -91,13 +91,17 @@ $acoesLaterais = [['Receber selecionados', 'bi-check2-all', 'abrirBaixaLote()'],
 // Imprimir / Planilha: com títulos marcados, levam só eles (ver abrirComSelecao no fim da página).
 $acoesListagem = [
     ['Imprimir', 'bi-printer', "abrirComSelecao({imprimir: 1}, true)"],
-    ['Imprimir agrupado por cliente', 'bi-people', "abrirComSelecao({imprimir: 1, agrupar: 'cliente'}, true)"],
-    ['Planilha (Excel)', 'bi-filetype-csv', "abrirComSelecao({csv: 1}, false)"],
-    ['Atualizar pela planilha', 'bi-upload', "location.href='/receber/atualizar_planilha.php'"],
+    ['Imprimir agrupado por pagador', 'bi-people', "abrirComSelecao({imprimir: 1, agrupar: 'pagador'}, true)"],
+    //['Planilha (Excel)', 'bi-filetype-csv', "abrirComSelecao({csv: 1}, false)"],
+    //['Atualizar pela planilha', 'bi-upload', "location.href='/receber/atualizar_planilha.php'"],
 ];
+
+/*
 if (usuarioTemPermissao('baixar_receber')) {
     $acoesListagem[] = ['Importar planilha do banco', 'bi-file-earmark-spreadsheet', "location.href='/receber/importar_banco.php'"];
 }
+*/
+
 $acoesListagem[] = ['Lançamento avulso', 'bi-plus-lg', "location.href='/receber/form.php'"];
 // Boleto: só para quem pode emitir e se algum tipo registra boleto (Cadastros › Tipos de recebimento).
 $podeBoleto = usuarioTemPermissao('emitir_boleto') && tiposComBoleto($pdo);
@@ -134,7 +138,7 @@ if (isset($_GET['csv'])) {
 
 // Relatório para imprimir / salvar em PDF, com os mesmos filtros da tela.
 if (isset($_GET['imprimir'])) {
-    $agrupado = ($_GET['agrupar'] ?? '') === 'cliente';
+    $agrupado = ($_GET['agrupar'] ?? '') === 'pagador';
     $situacoesRel = ['abertos' => 'Em aberto', 'vencidos' => 'Vencidos', 'devolvidos' => 'Devolvidos', 'recebidos' => 'Recebidos', 'transferidos' => 'Devolvidos ao cliente', 'renegociados' => 'Renegociados', 'cancelados' => 'Cancelados', 'todos' => 'Todos'];
     $filtrosRel = array_filter([
         $idsMarcados ? 'Só os ' . count($idsMarcados) . ' título(s) selecionado(s)' : null,
@@ -169,20 +173,20 @@ if (isset($_GET['imprimir'])) {
 <body>
 <div class="folha">
     <div class="d-flex justify-content-between align-items-start border-bottom pb-2 mb-2">
-        <div><div class="fw-bold fs-5"><?= e(nomeSistema()) ?></div><div class="text-muted">Relatório de contas a receber<?= $agrupado ? ' · agrupado por cliente' : '' ?></div></div>
+        <div><div class="fw-bold fs-5"><?= e(nomeSistema()) ?></div><div class="text-muted">Relatório de contas a receber<?= $agrupado ? ' · agrupado por pagador' : '' ?></div></div>
         <div class="text-end small text-muted"><?= e(implode(' · ', $filtrosRel)) ?><br>Emitido em <?= date('d/m/Y H:i') ?></div>
     </div>
     <?php
-    // Uma linha de título no relatório (com ou sem a coluna Cliente).
-    $linhaRel = function (array $t, bool $comCliente) use ($atualizacoes) {
+    // Uma linha de título no relatório (no agrupado, sem a coluna Pagador: ele é o grupo).
+    $linhaRel = function (array $t, bool $comPagador) use ($atualizacoes) {
         $at = $atualizacoes[$t['id']];
         $st = statusTelaReceber($t);
         ?>
             <tr>
                 <td class="text-num <?= $st === 'vencido' ? 'valor-negativo' : '' ?>"><?= formatDate($t['data_vencimento']) ?></td>
                 <td><?= e(tipoTituloLabel($t['tipo'])) ?></td>
-                <td><?= e($t['emitente_nome'] ?? $t['descricao'] ?? '-') ?></td>
-                <?php if ($comCliente): ?><td><?= e($t['cliente_nome'] ?? '-') ?></td><?php endif; ?>
+                <?php if ($comPagador): ?><td><?= e($t['emitente_nome'] ?? $t['descricao'] ?? '-') ?></td><?php endif; ?>
+                <td><?= e($t['cliente_nome'] ?? '-') ?></td>
                 <td><?= e($t['numero_titulo'] ?: $t['boleto_nosso_numero']) ?: '-' ?></td>
                 <td><?= e($t['conta_nome'] ?? '—') ?></td>
                 <td class="text-end text-num"><?= formatMoney($t['status'] === 'recebido' ? $t['valor_recebido'] : $t['valor']) ?></td>
@@ -207,37 +211,41 @@ if (isset($_GET['imprimir'])) {
     </table>
     <?php else:
         $grupos = [];
+        // Pelo cadastro do pagador (nomes iguais de pessoas diferentes não se misturam).
+        $nomes = [];
         foreach ($titulos as $t) {
-            $grupos[$t['cliente_nome'] ?? 'Sem cliente (títulos avulsos)'][] = $t;
+            $chave = $t['emitente_id'] ? 'p' . $t['emitente_id'] : 'sem';
+            $nomes[$chave] = $t['emitente_nome'] ?? 'Sem pagador';
+            $grupos[$chave][] = $t;
         }
         $resumo = [];
-        foreach ($grupos as $nome => $ts) {
-            $resumo[$nome] = ['qtd' => count($ts), 'valor' => array_sum(array_map($valorRel, $ts)), 'atualizado' => array_sum(array_map($atualRel, $ts)),
+        foreach ($grupos as $chave => $ts) {
+            $resumo[$chave] = ['nome' => $nomes[$chave], 'documento' => $ts[0]['emitente_documento'] ?? null, 'qtd' => count($ts), 'valor' => array_sum(array_map($valorRel, $ts)), 'atualizado' => array_sum(array_map($atualRel, $ts)),
                 'vencidos' => count(array_filter($ts, fn ($t) => in_array(statusTelaReceber($t), ['vencido', 'devolvido'], true)))];
         }
         uasort($resumo, fn ($a, $b) => $b['atualizado'] <=> $a['atualizado']);
     ?>
-    <div class="fw-semibold text-uppercase small mb-1" style="letter-spacing: .06em;">Débito por cliente</div>
+    <div class="fw-semibold text-uppercase small mb-1" style="letter-spacing: .06em;">Débito por pagador</div>
     <table class="table table-sm align-middle mb-4">
-        <thead><tr><th>Cliente</th><th class="text-center">Títulos</th><th class="text-center">Vencidos</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th></tr></thead>
+        <thead><tr><th>Pagador</th><th>CPF/CNPJ</th><th class="text-center">Títulos</th><th class="text-center">Vencidos</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th></tr></thead>
         <tbody>
-        <?php foreach ($resumo as $nome => $r): ?>
-            <tr><td><?= e($nome) ?></td><td class="text-center"><?= $r['qtd'] ?></td><td class="text-center <?= $r['vencidos'] ? 'valor-negativo' : '' ?>"><?= $r['vencidos'] ?: '-' ?></td>
+        <?php foreach ($resumo as $r): ?>
+            <tr><td><?= e($r['nome']) ?></td><td class="text-num"><?= $r['documento'] ? e(documentoFormatado($r['documento'])) : '-' ?></td><td class="text-center"><?= $r['qtd'] ?></td><td class="text-center <?= $r['vencidos'] ? 'valor-negativo' : '' ?>"><?= $r['vencidos'] ?: '-' ?></td>
                 <td class="text-end text-num"><?= formatMoney($r['valor']) ?></td><td class="text-end text-num fw-semibold"><?= formatMoney($r['atualizado']) ?></td></tr>
         <?php endforeach; ?>
-        <?php if (!$resumo): ?><tr><td colspan="5" class="text-center text-muted py-3">Nada com esses filtros.</td></tr><?php endif; ?>
-        <tr class="linha-total"><td><?= count($resumo) ?> cliente(s)</td><td class="text-center"><?= count($titulos) ?></td><td></td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td></tr>
+        <?php if (!$resumo): ?><tr><td colspan="6" class="text-center text-muted py-3">Nada com esses filtros.</td></tr><?php endif; ?>
+        <tr class="linha-total"><td colspan="2"><?= count($resumo) ?> pagador(es)</td><td class="text-center"><?= count($titulos) ?></td><td></td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td></tr>
         </tbody>
     </table>
 
-    <div class="fw-semibold text-uppercase small mb-1" style="letter-spacing: .06em;">Títulos de cada cliente</div>
+    <div class="fw-semibold text-uppercase small mb-1" style="letter-spacing: .06em;">Títulos de cada pagador</div>
     <table class="table table-sm align-middle">
-        <thead><tr><th>Vencimento</th><th>Tipo</th><th>Pagador</th><th>Nº</th><th>Conta</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Situação</th></tr></thead>
-        <?php foreach (array_keys($resumo) as $nome): $r = $resumo[$nome]; ?>
+        <thead><tr><th>Vencimento</th><th>Tipo</th><th>Cliente</th><th>Nº</th><th>Conta</th><th class="text-end">Valor</th><th class="text-end">Atualizado hoje</th><th>Situação</th></tr></thead>
+        <?php foreach ($resumo as $chave => $r): ?>
         <tbody class="grupo-cliente">
-            <tr class="linha-grupo"><td colspan="8"><?= e($nome) ?></td></tr>
-            <?php foreach ($grupos[$nome] as $t) { $linhaRel($t, false); } ?>
-            <tr class="linha-subtotal"><td colspan="5">Total de <?= e($nome) ?> · <?= $r['qtd'] ?> título(s)</td><td class="text-end text-num"><?= formatMoney($r['valor']) ?></td><td class="text-end text-num"><?= formatMoney($r['atualizado']) ?></td><td></td></tr>
+            <tr class="linha-grupo"><td colspan="8"><?= e($r['nome']) ?><?= $r['documento'] ? ' <span class="fw-normal text-muted">· ' . e(documentoFormatado($r['documento'])) . '</span>' : '' ?></td></tr>
+            <?php foreach ($grupos[$chave] as $t) { $linhaRel($t, false); } ?>
+            <tr class="linha-subtotal"><td colspan="5">Total de <?= e($r['nome']) ?> · <?= $r['qtd'] ?> título(s)</td><td class="text-end text-num"><?= formatMoney($r['valor']) ?></td><td class="text-end text-num"><?= formatMoney($r['atualizado']) ?></td><td></td></tr>
         </tbody>
         <?php endforeach; ?>
         <tbody><tr class="linha-total"><td colspan="5">Total geral · <?= count($titulos) ?> título(s)</td><td class="text-end text-num"><?= formatMoney($total) ?></td><td class="text-end text-num"><?= formatMoney($totalAtualizado) ?></td><td></td></tr></tbody>
