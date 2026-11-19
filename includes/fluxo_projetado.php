@@ -13,7 +13,7 @@
 function fluxoProjetado(PDO $pdo, int $dias = 90, int $passo = 10): array
 {
     $hoje = date('Y-m-d');
-    $fim = date('Y-m-d', strtotime("+{$dias} days"));
+    $fim = date('Y-m-d', strtotime('+' . ($dias - 1) . ' days'));
     $saldo = array_sum(array_map(fn ($c) => (float) $c['saldo'], contasComSaldo($pdo)));
 
     // Reputação: pagador do título; título sem pagador (ex.: residual) usa o cliente.
@@ -30,7 +30,8 @@ function fluxoProjetado(PDO $pdo, int $dias = 90, int $passo = 10): array
 
     $periodos = [];
     for ($ini = 0; $ini < $dias; $ini += $passo) {
-        $periodos[] = ['ate' => date('Y-m-d', strtotime('+' . min($dias, $ini + $passo) . ' days')), 'certas' => 0.0, 'provaveis' => 0.0, 'saidas' => 0.0];
+        // Primeiro período começa hoje: com passo 1, cada período é um dia (hoje, amanhã...).
+        $periodos[] = ['ate' => date('Y-m-d', strtotime('+' . min($dias - 1, $ini + $passo - 1) . ' days')), 'certas' => 0.0, 'provaveis' => 0.0, 'saidas' => 0.0];
     }
     $indice = function (string $data) use ($periodos): int {
         foreach ($periodos as $i => $p) {
@@ -85,4 +86,22 @@ function fluxoProjetado(PDO $pdo, int $dias = 90, int $passo = 10): array
 
     return ['saldo' => round($saldo, 2), 'periodos' => $periodos, 'livre' => round($livre, 2), 'incertas' => $incertas,
         'dias' => $dias, 'passo' => $passo, 'total_certas' => round($acCertas, 2), 'total_provaveis' => round($acProvaveis, 2), 'total_saidas' => round($acSaidas, 2)];
+}
+
+/**
+ * Junta os períodos de um fluxo diário ($passo = 1) em períodos de $dias:
+ * entradas e saídas somam; acumulados e saldos ficam os do último dia.
+ */
+function agruparFluxo(array $periodos, int $dias): array
+{
+    $grupos = [];
+    foreach (array_chunk($periodos, $dias) as $bloco) {
+        $ultimo = end($bloco);
+        $grupos[] = array_merge($ultimo, [
+            'certas' => array_sum(array_column($bloco, 'certas')),
+            'provaveis' => array_sum(array_column($bloco, 'provaveis')),
+            'saidas' => array_sum(array_column($bloco, 'saidas')),
+        ]);
+    }
+    return $grupos;
 }

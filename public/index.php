@@ -81,7 +81,8 @@ $ganho12 = array_sum(array_column($serieGanhos, 'total'));
 $ganhoProj = array_sum(array_column($projecao['meses'], 'total'));
 
 // Fluxo projetado: entradas pela reputação de quem paga x saídas, de 10 em 10 dias.
-$fluxo = fluxoProjetado($pdo, 90, 10);
+$fluxo = fluxoProjetado($pdo, 90, 1); // dia a dia; o gráfico agrupa conforme o horizonte escolhido
+$fluxoTabela = agruparFluxo($fluxo['periodos'], 10);
 
 $pageTitle = 'Olá, ' . explode(' ', trim(usuarioAtualNome()))[0];
 $pageBreadcrumb = 'Início';
@@ -262,48 +263,54 @@ require __DIR__ . '/../includes/layout_header.php';
 </script>
 
 <div class="secao">
-    <div class="secao-titulo"><i class="bi bi-graph-up-arrow"></i> Fluxo projetado: próximos <?= $fluxo['dias'] ?> dias</div>
+    <div class="secao-titulo"><i class="bi bi-graph-up-arrow"></i> Fluxo projetado: quanto posso usar
+        <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="Horizonte">
+            <?php foreach ([30, 60, 90] as $h): ?><button type="button" class="btn btn-outline-secondary <?= $h === 30 ? 'active' : '' ?>" data-horizonte="<?= $h ?>"><?= $h ?> dias</button><?php endforeach; ?>
+        </div></div>
     <div class="card"><div class="card-body">
         <div class="d-flex flex-wrap gap-4 mb-3 small">
             <div><div class="text-muted">Em conta hoje</div><div class="fw-semibold fs-5 text-num"><?= formatMoney($fluxo['saldo']) ?></div></div>
-            <div title="O menor saldo que a conta chega a ter nos próximos <?= $fluxo['dias'] ?> dias contando só as entradas certas">
-                <div class="text-muted"><?= $fluxo['livre'] >= 0 ? 'Livre para usar sem comprometer' : 'Vai faltar (só com as entradas certas)' ?></div>
-                <div class="fw-semibold fs-4 text-num <?= $fluxo['livre'] >= 0 ? 'valor-positivo' : 'valor-negativo' ?>"><?= formatMoney(abs($fluxo['livre'])) ?></div></div>
-            <div><div class="text-muted">Entradas certas</div><div class="fw-semibold text-num"><?= formatMoney($fluxo['total_certas']) ?></div></div>
-            <div><div class="text-muted">Prováveis</div><div class="fw-semibold text-num"><?= formatMoney($fluxo['total_provaveis']) ?></div></div>
-            <div><div class="text-muted">Saídas</div><div class="fw-semibold text-num valor-negativo"><?= formatMoney($fluxo['total_saidas']) ?></div></div>
+            <div title="O menor saldo que a conta chega a ter no período contando só as entradas certas">
+                <div class="text-muted" id="fluxo-livre-rotulo">Livre para usar</div>
+                <div class="fw-semibold fs-4 text-num" id="fluxo-livre">-</div></div>
+            <div><div class="text-muted">Entradas certas</div><div class="fw-semibold text-num" id="fluxo-certas">-</div></div>
+            <div><div class="text-muted">Prováveis</div><div class="fw-semibold text-num" id="fluxo-provaveis">-</div></div>
+            <div><div class="text-muted">Saídas</div><div class="fw-semibold text-num valor-negativo" id="fluxo-saidas">-</div></div>
             <div title="Pagador em risco, títulos já vencidos e devolvidos: ficam fora da projeção"><div class="text-muted">Fora da conta (incertas)</div>
                 <div class="fw-semibold text-num text-muted"><?= formatMoney($fluxo['incertas']['risco'] + $fluxo['incertas']['vencidos']) ?></div></div>
         </div>
         <div class="d-flex flex-wrap gap-3 small text-muted mb-1">
-            <span><span class="legenda-linha" style="--cor: var(--serie-certas)"></span> Entradas certas (bons pagadores)</span>
-            <span><span class="legenda-linha tracejada" style="--cor: var(--serie-provaveis)"></span> Certas + prováveis (atenção e sem histórico)</span>
-            <span><span class="legenda-linha" style="--cor: var(--serie-saidas)"></span> Saídas (contas e cartões)</span>
+            <span><span class="legenda-linha" style="--cor: var(--serie-certas)"></span> Saldo só com as entradas certas (bons pagadores)</span>
+            <span><span class="legenda-linha tracejada" style="--cor: var(--serie-provaveis)"></span> Saldo contando também as prováveis</span>
         </div>
-        <div id="grafico-fluxo" class="grafico-fluxo" role="img" aria-label="Entradas acumuladas certas e prováveis contra saídas acumuladas nos próximos <?= $fluxo['dias'] ?> dias"></div>
-        <details class="small mt-2"><summary class="text-muted">Ver em tabela</summary>
+        <div id="grafico-fluxo" class="grafico-fluxo" role="img" aria-label="Saldo projetado da conta nos próximos dias, só com as entradas certas e contando as prováveis"></div>
+        <details class="small mt-2"><summary class="text-muted">Ver em tabela (de 10 em 10 dias)</summary>
             <table class="table table-sm mt-2 mb-0"><thead><tr><th>Até</th><th class="text-end">Entradas certas</th><th class="text-end">Prováveis</th><th class="text-end">Saídas</th><th class="text-end">Saldo (só certas)</th><th class="text-end">Saldo (com prováveis)</th></tr></thead><tbody>
-            <?php foreach ($fluxo['periodos'] as $p): ?><tr>
+            <?php foreach ($fluxoTabela as $p): ?><tr>
                 <td class="text-num"><?= formatDate($p['ate']) ?></td>
                 <td class="text-end text-num"><?= formatMoney($p['certas']) ?></td><td class="text-end text-num"><?= formatMoney($p['provaveis']) ?></td><td class="text-end text-num"><?= formatMoney($p['saidas']) ?></td>
                 <td class="text-end text-num fw-semibold <?= $p['saldo_conservador'] < 0 ? 'valor-negativo' : '' ?>"><?= formatMoney($p['saldo_conservador']) ?></td><td class="text-end text-num <?= $p['saldo_provavel'] < 0 ? 'valor-negativo' : '' ?>"><?= formatMoney($p['saldo_provavel']) ?></td>
             </tr><?php endforeach; ?>
             </tbody></table></details>
         <div class="form-text mt-1">Entradas pela pontuação de quem paga (<a href="/relatorios/pontuacao.php">ver pontuação</a>): certas = bom pagador; prováveis = atenção ou sem histórico; pagador em risco, títulos vencidos e devolvidos ficam de fora.
-            "Livre para usar" é o menor saldo que a conta chega a ter no período contando só as entradas certas. Saídas já vencidas entram no primeiro período.</div>
+            "Livre para usar" é o menor saldo que a conta chega a ter no período contando só as entradas certas: gastando até ele hoje, nenhum pagamento fica descoberto. Saídas já vencidas contam hoje.</div>
     </div></div>
 </div>
 <style>
-    :root { --serie-certas: #2a78d6; --serie-provaveis: #1baf7a; --serie-saidas: #eb6834; }
-    html[data-bs-theme="dark"] { --serie-certas: #3987e5; --serie-provaveis: #199e70; --serie-saidas: #d95926; }
+    :root { --serie-certas: #2a78d6; --serie-provaveis: #1baf7a; }
+    html[data-bs-theme="dark"] { --serie-certas: #3987e5; --serie-provaveis: #199e70; }
     .grafico-fluxo { position: relative; height: 280px; }
     .grafico-fluxo svg { width: 100%; height: 100%; display: block; overflow: visible; }
     .grafico-fluxo .linha { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
     .grafico-fluxo .grade { stroke: var(--border); stroke-width: 1; }
+    .grafico-fluxo .zero { stroke: var(--text-muted); stroke-width: 1.5; }
+    .grafico-fluxo .faixa-negativa { fill: var(--bs-danger, #dc3545); opacity: .06; }
     .grafico-fluxo .eixo { fill: var(--text-muted); font-size: 11px; }
+    .grafico-fluxo .eixo-zero { fill: var(--text); font-size: 11px; font-weight: 600; }
     .grafico-fluxo .rotulo { fill: var(--text); font-size: 11px; font-weight: 600; }
     .grafico-fluxo .mira { stroke: var(--text-muted); stroke-width: 1; }
     .grafico-fluxo .ponto { stroke: var(--surface, #fff); stroke-width: 2; }
+    .grafico-fluxo .minimo { fill: var(--serie-certas); stroke: var(--surface, #fff); stroke-width: 2; }
     .legenda-linha { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--cor); vertical-align: middle; }
     .legenda-linha.tracejada { border-top-style: dashed; }
     .grafico-dica .linha-dica { display: flex; align-items: center; gap: .4rem; }
@@ -311,12 +318,13 @@ require __DIR__ . '/../includes/layout_header.php';
 </style>
 <script>
 (function () {
-    const periodos = <?= json_encode(array_map(fn ($p) => ['ate' => $p['ate'], 'certas' => $p['ac_certas'], 'provaveis' => $p['ac_com_provaveis'], 'saidas' => $p['ac_saidas'], 'saldo' => $p['saldo_conservador']], $fluxo['periodos']), JSON_HEX_TAG) ?>;
-    const pontos = [{ ate: <?= json_encode(date('Y-m-d')) ?>, certas: 0, provaveis: 0, saidas: 0, saldo: <?= json_encode($fluxo['saldo']) ?> }, ...periodos];
+    // Um ponto por dia (fim do dia); o primeiro é hoje, já com as saídas vencidas.
+    const dias = <?= json_encode(array_map(fn ($p) => ['data' => $p['ate'], 'certas' => $p['certas'], 'provaveis' => $p['provaveis'], 'saidas' => $p['saidas'],
+        'saldo' => $p['saldo_conservador'], 'saldoProvavel' => $p['saldo_provavel']], $fluxo['periodos']), JSON_HEX_TAG) ?>;
+    const saldoHoje = <?= json_encode($fluxo['saldo']) ?>;
     const series = [
-        { chave: 'certas', nome: 'Entradas certas', cor: 'var(--serie-certas)' },
-        { chave: 'provaveis', nome: 'Certas + prováveis', cor: 'var(--serie-provaveis)', tracejada: true },
-        { chave: 'saidas', nome: 'Saídas', cor: 'var(--serie-saidas)' },
+        { chave: 'saldo', nome: 'Só com as certas', cor: 'var(--serie-certas)' },
+        { chave: 'saldoProvavel', nome: 'Com as prováveis', cor: 'var(--serie-provaveis)', tracejada: true },
     ];
     const box = document.getElementById('grafico-fluxo');
     const reais = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -324,56 +332,85 @@ require __DIR__ . '/../includes/layout_header.php';
     const dataBr = (d) => d.slice(8, 10) + '/' + d.slice(5, 7);
     const NS = 'http://www.w3.org/2000/svg';
     const el = (tag, attrs, pai) => { const n = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); pai.appendChild(n); return n; };
+    let horizonte = 30;
+
+    function resumo(pontos) {
+        const soma = (k) => dias.slice(0, horizonte).reduce((t, d) => t + d[k], 0);
+        const livre = Math.min(saldoHoje, ...pontos.map((p) => p.saldo));
+        document.getElementById('fluxo-livre-rotulo').textContent = livre >= 0 ? 'Livre para usar (' + horizonte + ' dias)' : 'Vai faltar em ' + horizonte + ' dias (só certas)';
+        const elLivre = document.getElementById('fluxo-livre');
+        elLivre.textContent = reais(Math.abs(livre));
+        elLivre.className = 'fw-semibold fs-4 text-num ' + (livre >= 0 ? 'valor-positivo' : 'valor-negativo');
+        document.getElementById('fluxo-certas').textContent = reais(soma('certas'));
+        document.getElementById('fluxo-provaveis').textContent = reais(soma('provaveis'));
+        document.getElementById('fluxo-saidas').textContent = reais(soma('saidas'));
+    }
 
     function desenhar() {
         box.innerHTML = '';
-        const W = box.clientWidth, H = box.clientHeight, esq = 64, dir = 140, topo = 12, base = 26;
+        const pontos = dias.slice(0, horizonte).map((d, i) => ({ ...d, inicio: i === 0 }));
+        resumo(pontos);
+        const W = box.clientWidth, H = box.clientHeight, esq = 64, dir = 130, topo = 14, base = 26;
         const svg = el('svg', { viewBox: `0 0 ${W} ${H}` }, box);
-        const max = Math.max(1, ...pontos.flatMap((p) => series.map((s) => p[s.chave])));
-        const ordem = Math.pow(10, Math.floor(Math.log10(max)));
-        const passo = ordem * ([1, 2, 2.5, 5, 10].find((f) => f * ordem * 4 >= max) || 10);
-        const teto = Math.ceil(max / passo) * passo;
+        const valores = pontos.flatMap((p) => series.map((s) => p[s.chave]));
+        const minV = Math.min(0, ...valores), maxV = Math.max(0, ...valores);
+        const faixa = Math.max(1, maxV - minV);
+        const ordem = Math.pow(10, Math.floor(Math.log10(faixa)));
+        const passo = ordem * ([1, 2, 2.5, 5, 10].find((f) => f * ordem * 5 >= faixa) || 10);
+        const piso = Math.floor(minV / passo) * passo, teto = Math.ceil(maxV / passo) * passo || passo;
         const x = (i) => esq + (W - esq - dir) * i / (pontos.length - 1);
-        const y = (v) => topo + (H - topo - base) * (1 - v / teto);
-        for (let v = 0; v <= teto + 0.001; v += passo) {
-            el('line', { class: 'grade', x1: esq, x2: W - dir, y1: y(v), y2: y(v) }, svg);
-            el('text', { class: 'eixo', x: esq - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = curto(v);
+        const y = (v) => topo + (H - topo - base) * (teto - v) / (teto - piso);
+        if (piso < 0) el('rect', { class: 'faixa-negativa', x: esq, y: y(0), width: W - esq - dir, height: y(piso) - y(0) }, svg);
+        for (let v = piso; v <= teto + 0.001; v += passo) {
+            el('line', { class: Math.abs(v) < 0.001 ? 'zero' : 'grade', x1: esq, x2: W - dir, y1: y(v), y2: y(v) }, svg);
+            el('text', { class: Math.abs(v) < 0.001 ? 'eixo-zero' : 'eixo', x: esq - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = curto(v);
         }
-        const pulo = Math.ceil(40 / ((W - esq - dir) / (pontos.length - 1))); // datas que cabem sem encavalar
-        pontos.forEach((p, i) => { if (i % pulo === 0) el('text', { class: 'eixo', x: x(i), y: H - 8, 'text-anchor': 'middle' }, svg).textContent = i === 0 ? 'hoje' : dataBr(p.ate); });
+        // Datas do eixo: espaçadas para caber (ao menos 46px entre elas).
+        const pulo = Math.max(1, Math.ceil(46 / ((W - esq - dir) / (pontos.length - 1))));
+        pontos.forEach((p, i) => { if (i % pulo === 0) el('text', { class: 'eixo', x: x(i), y: H - 8, 'text-anchor': 'middle' }, svg).textContent = p.inicio ? 'hoje' : dataBr(p.data); });
+        series.forEach((s) => el('path', { class: 'linha', stroke: s.cor, 'stroke-dasharray': s.tracejada ? '6 4' : '', d: pontos.map((p, i) => (i ? 'L' : 'M') + x(i) + ',' + y(p[s.chave])).join(' ') }, svg));
+        // Ponto mais baixo da linha das certas: é o "livre para usar".
+        const iMin = pontos.reduce((m, p, i) => (p.saldo < pontos[m].saldo ? i : m), 0);
+        el('circle', { class: 'minimo', cx: x(iMin), cy: y(pontos[iMin].saldo), r: 5 }, svg);
+        el('text', { class: 'rotulo', x: x(iMin), y: y(pontos[iMin].saldo) + (pontos[iMin].saldo < 0 || y(pontos[iMin].saldo) < topo + 20 ? 18 : -10), 'text-anchor': iMin === 0 ? 'start' : 'middle' }, svg).textContent = 'menor: ' + curto(pontos[iMin].saldo) + ' em ' + (pontos[iMin].inicio ? 'hoje' : dataBr(pontos[iMin].data));
         // Rótulos no fim das linhas, afastados para não encavalar.
-        const fins = series.map((s) => ({ s, y: y(pontos[pontos.length - 1][s.chave]) })).sort((a, b) => a.y - b.y);
+        const ult = pontos[pontos.length - 1];
+        const fins = series.map((s) => ({ s, y: y(ult[s.chave]) })).sort((a, b) => a.y - b.y);
         for (let i = 1; i < fins.length; i++) fins[i].y = Math.max(fins[i].y, fins[i - 1].y + 14);
-        series.forEach((s) => {
-            el('path', { class: 'linha', stroke: s.cor, 'stroke-dasharray': s.tracejada ? '6 4' : '', d: pontos.map((p, i) => (i ? 'L' : 'M') + x(i) + ',' + y(p[s.chave])).join(' ') }, svg);
-        });
         fins.forEach(({ s, y: yy }) => {
-            const t = el('text', { class: 'rotulo', x: W - dir + 8, y: yy + 4 }, svg); t.textContent = curto(pontos[pontos.length - 1][s.chave]);
-            el('text', { class: 'eixo', x: W - dir + 8 + t.getComputedTextLength() + 4, y: yy + 4 }, svg).textContent = s.chave === 'saidas' ? 'saídas' : s.chave === 'certas' ? 'certas' : '+ prováveis';
+            const t = el('text', { class: 'rotulo', x: W - dir + 8, y: yy + 4 }, svg); t.textContent = curto(ult[s.chave]);
+            el('text', { class: 'eixo', x: W - dir + 8 + t.getComputedTextLength() + 4, y: yy + 4 }, svg).textContent = s.tracejada ? 'com prováveis' : 'só certas';
         });
 
-        // Mira: segue o mouse e encaixa na data mais próxima; a dica mostra todas as linhas.
+        // Mira: segue o mouse e encaixa no dia mais próximo; a dica mostra as duas linhas e o movimento do dia.
         const mira = el('line', { class: 'mira', y1: topo, y2: H - base, visibility: 'hidden' }, svg);
         const marcas = series.map((s) => el('circle', { class: 'ponto', r: 4, fill: s.cor, visibility: 'hidden' }, svg));
         const dica = document.createElement('div'); dica.className = 'grafico-dica'; dica.hidden = true; box.appendChild(dica);
         const area = el('rect', { x: esq, y: topo, width: W - esq - dir, height: H - topo - base, fill: 'transparent', tabindex: 0 }, svg);
-        let atual = pontos.length - 1;
+        let atual = 0;
+        const linhaDica = (nome, v, cor, tracejada, classe) => {
+            const linha = document.createElement('div'); linha.className = 'linha-dica';
+            const chave = document.createElement('span'); chave.className = 'legenda-linha' + (tracejada ? ' tracejada' : '');
+            if (cor) chave.style.setProperty('--cor', cor); else chave.style.visibility = 'hidden';
+            const rotulo = document.createElement('span'); rotulo.textContent = nome;
+            const valor = document.createElement('b'); valor.textContent = reais(v); valor.className = classe || (v < 0 ? 'valor-negativo' : '');
+            linha.append(chave, rotulo, valor); dica.appendChild(linha);
+        };
         const mostrar = (i) => {
             atual = i; const p = pontos[i];
             mira.setAttribute('x1', x(i)); mira.setAttribute('x2', x(i)); mira.setAttribute('visibility', 'visible');
             series.forEach((s, k) => { marcas[k].setAttribute('cx', x(i)); marcas[k].setAttribute('cy', y(p[s.chave])); marcas[k].setAttribute('visibility', 'visible'); });
             dica.replaceChildren();
-            const titulo = document.createElement('div'); titulo.className = 'text-muted mb-1'; titulo.textContent = i === 0 ? 'Hoje' : 'Acumulado até ' + dataBr(p.ate); dica.appendChild(titulo);
-            [...series.map((s) => [s.nome, p[s.chave], s.cor, s.tracejada]), ['Saldo só com as certas', p.saldo, null]].forEach(([nome, v, cor, tracejada]) => {
-                const linha = document.createElement('div'); linha.className = 'linha-dica';
-                const chave = document.createElement('span'); chave.className = 'legenda-linha' + (tracejada ? ' tracejada' : ''); if (cor) chave.style.setProperty('--cor', cor); else chave.style.visibility = 'hidden';
-                const rotulo = document.createElement('span'); rotulo.textContent = nome;
-                const valor = document.createElement('b'); valor.textContent = reais(v); if (!cor && v < 0) valor.className = 'valor-negativo';
-                linha.append(chave, rotulo, valor); dica.appendChild(linha);
-            });
+            const titulo = document.createElement('div'); titulo.className = 'text-muted mb-1'; titulo.textContent = p.inicio ? 'Fim de hoje (já com as contas vencidas)' : 'Saldo no fim de ' + dataBr(p.data); dica.appendChild(titulo);
+            series.forEach((s) => linhaDica(s.nome, p[s.chave], s.cor, s.tracejada));
+            if (p.certas || p.provaveis || p.saidas) {
+                const sep = document.createElement('div'); sep.className = 'text-muted mt-1'; sep.textContent = 'No dia:'; dica.appendChild(sep);
+                if (p.certas) linhaDica('entram (certas)', p.certas, null, false, 'valor-positivo');
+                if (p.provaveis) linhaDica('entram (prováveis)', p.provaveis, null, false, '');
+                if (p.saidas) linhaDica('saem', -p.saidas, null, false, 'valor-negativo');
+            }
             dica.hidden = false;
             dica.style.top = (topo + 4) + 'px';
-            // Abre do lado oposto ao da mira, para não tapar as linhas daquele ponto.
             dica.style.left = x(i) + 'px';
             dica.style.transform = x(i) > (esq + W - dir) / 2 ? 'translate(calc(-100% - 12px), 0)' : 'translate(12px, 0)';
         };
@@ -391,6 +428,11 @@ require __DIR__ . '/../includes/layout_header.php';
             if (ev.key === 'ArrowLeft') { ev.preventDefault(); mostrar(Math.max(0, atual - 1)); }
         });
     }
+    document.querySelectorAll('[data-horizonte]').forEach((b) => b.addEventListener('click', () => {
+        horizonte = Number(b.dataset.horizonte);
+        document.querySelectorAll('[data-horizonte]').forEach((o) => o.classList.toggle('active', o === b));
+        desenhar();
+    }));
     desenhar();
     let t; window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(desenhar, 150); });
 })();
