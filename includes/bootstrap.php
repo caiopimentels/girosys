@@ -62,6 +62,7 @@ require_once __DIR__ . '/planilha.php';
 require_once __DIR__ . '/importacao_banco.php';
 require_once __DIR__ . '/renegociacao.php';
 require_once __DIR__ . '/rentabilidade.php';
+require_once __DIR__ . '/fluxo_projetado.php';
 
 csrfToken();
 
