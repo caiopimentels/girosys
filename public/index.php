@@ -74,6 +74,12 @@ $proxPagar = $stmt->fetchAll();
 
 $compromissos = compromissosCartao($pdo, 6);
 
+// Crescimento: ganho mês a mês (mesma conta do relatório de rentabilidade) e projeção pela tendência.
+$serieGanhos = serieGanhosMensais($pdo, 12);
+$projecao = projecaoGanhos($serieGanhos, 6);
+$ganho12 = array_sum(array_column($serieGanhos, 'total'));
+$ganhoProj = array_sum(array_column($projecao['meses'], 'total'));
+
 $pageTitle = 'Olá, ' . explode(' ', trim(usuarioAtualNome()))[0];
 $pageBreadcrumb = 'Início';
 $activeMenu = 'dashboard';
@@ -151,6 +157,106 @@ require __DIR__ . '/../includes/layout_header.php';
         </div></div></div>
     </div>
 </div>
+
+<div class="secao">
+    <div class="secao-titulo"><i class="bi bi-bar-chart-line"></i> Crescimento: ganho por mês
+        <a href="/relatorios/rentabilidade.php" class="btn btn-sm btn-outline-secondary ms-auto">Rentabilidade</a></div>
+    <div class="card"><div class="card-body">
+        <div class="d-flex flex-wrap gap-4 mb-2 small">
+            <div><div class="text-muted">Ganho nos últimos 12 meses</div><div class="fw-semibold fs-5 text-num"><?= formatMoney($ganho12) ?></div></div>
+            <div><div class="text-muted">Projeção dos próximos 6 meses</div><div class="fw-semibold fs-5 text-num"><?= formatMoney($ganhoProj) ?></div></div>
+            <div><div class="text-muted">Tendência</div><div class="fw-semibold fs-5 text-num"><?= $projecao['base_meses'] >= 3 ? ($projecao['inclinacao'] >= 0 ? '+' : '−') . formatMoney(abs($projecao['inclinacao'])) . ' <span class="small fw-normal text-muted">por mês</span>' : '<span class="small fw-normal text-muted">poucos meses de dados</span>' ?></div></div>
+            <div class="ms-auto d-flex align-items-end gap-3 text-muted">
+                <span><span class="legenda-barra"></span> Realizado</span>
+                <span><span class="legenda-barra" style="opacity: .55"></span> Mês atual (até hoje)</span>
+                <span><span class="legenda-barra projetada"></span> Projeção</span>
+            </div>
+        </div>
+        <div id="grafico-crescimento" class="grafico-crescimento" role="img" aria-label="Ganho por mês nos últimos 12 meses e projeção dos próximos 6"></div>
+        <details class="small mt-2"><summary class="text-muted">Ver em tabela</summary>
+            <table class="table table-sm mt-2 mb-0"><thead><tr><th>Mês</th><th class="text-end">Ganho</th><th class="text-end">Operações</th><th class="text-end">Títulos descontados</th></tr></thead><tbody>
+            <?php foreach ($serieGanhos as $m): ?><tr><td><?= e(nomeMes($m['mes'])) ?><?= $m['parcial'] ? ' <span class="text-muted">(até hoje)</span>' : '' ?></td><td class="text-end text-num"><?= formatMoney($m['total']) ?></td><td class="text-end"><?= $m['operacoes'] ?: '-' ?></td><td class="text-end text-num"><?= $m['bruto'] > 0 ? formatMoney($m['bruto']) : '-' ?></td></tr><?php endforeach; ?>
+            <?php foreach ($projecao['meses'] as $m): ?><tr class="text-muted"><td><?= e(nomeMes($m['mes'])) ?> (projeção)</td><td class="text-end text-num"><?= formatMoney($m['total']) ?></td><td></td><td></td></tr><?php endforeach; ?>
+            </tbody></table></details>
+        <div class="form-text mt-1">Ganho = deságio + juros dos repasses + juros/multa por atraso + renegociações + arredondamentos. Projeção pela tendência dos últimos <?= max(1, $projecao['base_meses']) ?> mês(es) fechados (o mês atual ainda está em andamento); é uma estimativa.</div>
+    </div></div>
+</div>
+<style>
+    .grafico-crescimento { position: relative; height: 240px; }
+    .grafico-crescimento svg { width: 100%; height: 100%; display: block; overflow: visible; }
+    .grafico-crescimento .barra, .grafico-crescimento text, .grafico-crescimento line { pointer-events: none; }
+    .grafico-crescimento .alvo { cursor: default; outline: none; }
+    .grafico-crescimento .barra { fill: var(--accent); }
+    .grafico-crescimento .barra.parcial { fill: var(--accent); opacity: .55; }
+    .grafico-crescimento .barra.projetada { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .grafico-crescimento .alvo:hover + .barra, .grafico-crescimento .alvo:focus + .barra { filter: brightness(1.12); }
+    .grafico-crescimento .grade { stroke: var(--border); stroke-width: 1; }
+    .grafico-crescimento .eixo { fill: var(--text-muted); font-size: 11px; }
+    .grafico-crescimento .rotulo { fill: var(--text); font-size: 11px; font-weight: 600; }
+    .grafico-crescimento .divisa { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 2 3; }
+    .grafico-dica { position: absolute; pointer-events: none; background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 8px; padding: .4rem .6rem; font-size: .8rem; box-shadow: 0 4px 14px rgba(0,0,0,.08); white-space: nowrap; transform: translate(-50%, -100%); z-index: 5; }
+    .grafico-dica strong { display: block; font-size: .95rem; }
+    .legenda-barra { display: inline-block; width: 12px; height: 10px; border-radius: 2px; background: var(--accent); vertical-align: middle; }
+    .legenda-barra.projetada { background: var(--accent-soft); border: 1.5px dashed var(--accent); }
+</style>
+<script>
+(function () {
+    const real = <?= json_encode(array_map(fn ($m) => ['mes' => $m['mes'], 'nome' => nomeMes($m['mes']), 'valor' => $m['total'], 'ops' => $m['operacoes'], 'parcial' => $m['parcial']], $serieGanhos), JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) ?>;
+    const proj = <?= json_encode(array_map(fn ($m) => ['mes' => $m['mes'], 'nome' => nomeMes($m['mes']), 'valor' => $m['total'], 'projetada' => true], $projecao['meses']), JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) ?>;
+    const dados = [...real, ...proj];
+    const box = document.getElementById('grafico-crescimento');
+    const reais = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const curto = (v) => v === 0 ? 'R$ 0' : v >= 1000 ? 'R$ ' + (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : reais(v);
+    const mesCurto = (m) => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(m.slice(5)) - 1] + '/' + m.slice(2, 4);
+    const NS = 'http://www.w3.org/2000/svg';
+    const el = (tag, attrs, pai) => { const n = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); pai.appendChild(n); return n; };
+
+    function desenhar() {
+        box.innerHTML = '';
+        const W = box.clientWidth, H = box.clientHeight, esq = 64, dir = 8, topo = 18, base = 26;
+        const svg = el('svg', { viewBox: `0 0 ${W} ${H}` }, box);
+        const max = Math.max(1, ...dados.map((d) => d.valor));
+        // Escala "redonda" para a grade.
+        const passo = Math.pow(10, Math.floor(Math.log10(max))) * ([1, 2, 2.5, 5, 10].find((f) => f * Math.pow(10, Math.floor(Math.log10(max))) * 4 >= max) || 10);
+        const teto = Math.ceil(max / passo) * passo;
+        const y = (v) => topo + (H - topo - base) * (1 - v / teto);
+        for (let v = 0; v <= teto + 0.001; v += passo) {
+            el('line', { class: 'grade', x1: esq, x2: W - dir, y1: y(v), y2: y(v) }, svg);
+            el('text', { class: 'eixo', x: esq - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = curto(v);
+        }
+        const larg = (W - esq - dir) / dados.length;
+        const bw = Math.max(6, Math.min(36, larg * 0.62));
+        const dica = document.createElement('div'); dica.className = 'grafico-dica'; dica.hidden = true; box.appendChild(dica);
+        let maiorReal = real.reduce((a, d, i) => (d.valor > real[a].valor ? i : a), 0);
+        dados.forEach((d, i) => {
+            const cx = esq + larg * i + larg / 2;
+            const h = Math.max(d.valor > 0 ? 2 : 0, y(0) - y(d.valor));
+            // Alvo transparente da altura toda: o mouse não precisa acertar a barra.
+            const alvo = el('rect', { class: 'alvo', x: cx - larg / 2, y: topo, width: larg, height: H - topo - base, fill: 'transparent', tabindex: 0 }, svg);
+            el('path', { class: 'barra' + (d.projetada ? ' projetada' : d.parcial ? ' parcial' : ''),
+                d: h > 0 ? `M${cx - bw / 2},${y(0)} V${y(0) - h + 4} Q${cx - bw / 2},${y(0) - h} ${cx - bw / 2 + 4},${y(0) - h} H${cx + bw / 2 - 4} Q${cx + bw / 2},${y(0) - h} ${cx + bw / 2},${y(0) - h + 4} V${y(0)} Z` : '' }, svg);
+            if (i % (larg < 34 ? 2 : 1) === 0 || i === dados.length - 1) el('text', { class: 'eixo', x: cx, y: H - 8, 'text-anchor': 'middle' }, svg).textContent = mesCurto(d.mes);
+            // Rótulo só no maior mês realizado e no último projetado.
+            if ((!d.projetada && i === maiorReal && d.valor > 0) || i === dados.length - 1) el('text', { class: 'rotulo', x: cx, y: y(d.valor) - 6, 'text-anchor': 'middle' }, svg).textContent = curto(d.valor);
+            const mostrar = () => {
+                dica.replaceChildren();
+                const v = document.createElement('strong'); v.textContent = reais(d.valor); dica.appendChild(v);
+                dica.appendChild(document.createTextNode(d.nome + (d.projetada ? ' · projeção' : d.parcial ? ' · até hoje' : '') + (d.ops ? ' · ' + d.ops + ' operação(ões)' : '')));
+                dica.hidden = false; dica.style.left = cx + 'px'; dica.style.top = (y(d.valor) - 8) + 'px';
+            };
+            alvo.addEventListener('pointerenter', mostrar); alvo.addEventListener('focus', mostrar);
+            alvo.addEventListener('pointerleave', () => (dica.hidden = true)); alvo.addEventListener('blur', () => (dica.hidden = true));
+        });
+        // Separa o realizado da projeção.
+        const xs = esq + larg * real.length;
+        el('line', { class: 'divisa', x1: xs, x2: xs, y1: topo - 6, y2: y(0) }, svg);
+        el('text', { class: 'eixo', x: xs + 6, y: topo - 6 }, svg).textContent = 'projeção';
+        el('line', { class: 'grade', x1: esq, x2: W - dir, y1: y(0), y2: y(0), style: 'stroke: var(--text-muted)' }, svg);
+    }
+    desenhar();
+    let t; window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(desenhar, 150); });
+})();
+</script>
 
 <div class="row g-4">
     <div class="col-lg-6">

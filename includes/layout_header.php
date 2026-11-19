@@ -49,6 +49,7 @@ $menus = [
         'rotulo' => 'Relatórios',
         'itens' => [
             ['Rentabilidade (quanto ganhei)', '/relatorios/rentabilidade.php', 'rentabilidade'],
+            ['Pontuação de pagadores e clientes', '/relatorios/pontuacao.php', 'pontuacao'],
         ],
     ],
     'cadastros' => [

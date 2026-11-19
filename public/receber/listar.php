@@ -76,7 +76,8 @@ $totalAtualizado = array_sum(array_map(fn ($t) => $t['status'] === 'recebido' ? 
 // Classificação de cada emitente (uma consulta por emitente distinto).
 $classificacoes = [];
 foreach (array_unique(array_filter(array_column($titulos, 'emitente_id'))) as $eid) {
-    $classificacoes[$eid] = historicoEmitente($pdo, (int) $eid)['classificacao'];
+    $h = historicoEmitente($pdo, (int) $eid);
+    $classificacoes[$eid] = [$h['classificacao'], $h['pontos']];
 }
 
 $vencidos = array_filter($titulos, fn ($t) => statusTelaReceber($t) === 'vencido' || $t['status'] === 'devolvido');
@@ -314,7 +315,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                         <div class="d-flex align-items-center gap-1">
                             <span class="text-truncate" style="max-width: 300px;" title="<?= e($pagador) ?>"><?= e($pagador) ?></span>
                             <?php if (isset($classificacoes[$t['emitente_id']]) && $classificacoes[$t['emitente_id']] !== 'bom' && $classificacoes[$t['emitente_id']] !== 'sem_historico'): ?>
-                                <?= badgeClassificacao($classificacoes[$t['emitente_id']]) ?>
+                                <?= badgeClassificacao(...$classificacoes[$t['emitente_id']]) ?>
                             <?php endif; ?>
                         </div>
                         <div class="small text-muted text-truncate" style="max-width: 300px;"><?= $t['cliente_nome'] ? e($t['cliente_nome']) : '-' ?></div>

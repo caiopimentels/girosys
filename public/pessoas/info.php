@@ -36,9 +36,9 @@ responderJson([
     'limite_credito' => $pessoa['limite_credito'] !== null ? (float) $pessoa['limite_credito'] : null,
     'credito_em_uso' => creditoEmUso($pdo, (int) $pessoa['id']),
     'historico' => $h,
-    'badge' => badgeClassificacao($h['classificacao']),
+    'badge' => badgeClassificacao($h['classificacao'], $h['pontos']),
     'resumo' => $h['total'] > 0
-        ? "{$rotulo}: {$h['total']} título(s), {$h['em_dia']} em dia, {$h['com_atraso']} com atraso, {$h['devolvidos']} devolvido(s), {$h['vencidos']} vencido(s) em aberto" . ($h['renegociados'] ? ", {$h['renegociados']} renegociado(s)" : '')
+        ? "{$rotulo} (" . formatarPontos($h['pontos']) . " pts): {$h['total']} título(s), {$h['em_dia']} em dia, {$h['com_atraso']} com atraso, {$h['devolvidos']} devolvido(s), {$h['vencidos']} vencido(s) em aberto" . ($h['renegociados'] ? ", {$h['renegociados']} renegociado(s)" : '')
         : 'Nenhum título deste pagador ainda',
     'adiantamentos' => array_map(fn ($a) => [
         'id' => (int) $a['id'],

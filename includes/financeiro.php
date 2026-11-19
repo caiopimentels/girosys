@@ -362,17 +362,14 @@ function historicoEmitente(PDO $pdo, int $pessoaId): array
         $h[$k] = in_array($k, ['valor_total', 'valor_em_aberto'], true) ? (float) $v : (int) $v;
     }
 
-    $liquidados = $h['em_dia'] + $h['com_atraso'] + $h['devolvidos'];
-    if ($h['total'] === 0) {
-        $h['classificacao'] = 'sem_historico';
-    } elseif ($h['devolvidos_em_aberto'] > 0 || $h['vencidos'] > 0 || ($liquidados > 0 && $h['devolvidos'] / $liquidados > 0.2)) {
-        $h['classificacao'] = 'risco';
-    } elseif ($h['devolvidos'] > 0 || $h['com_atraso'] > 0 || $h['renegociados'] > 0) {
+    // Classificação pela pontuação (includes/pontuacao.php). Com título vencido
+    // ou devolvido ainda em aberto, no máximo "atenção".
+    $pontuacao = pontuacaoPessoa($pdo, $pessoaId);
+    $h['pontos'] = $pontuacao['pontos'];
+    $h['adiantados'] = $pontuacao['adiantados'];
+    $h['classificacao'] = classificacaoPorPontos($pontuacao['pontos'], $pontuacao['liquidados']);
+    if ($h['classificacao'] === 'bom' && ($h['vencidos'] > 0 || $h['devolvidos_em_aberto'] > 0)) {
         $h['classificacao'] = 'atencao';
-    } elseif ($liquidados === 0) {
-        $h['classificacao'] = 'sem_historico';
-    } else {
-        $h['classificacao'] = 'bom';
     }
     return $h;
 }
@@ -387,10 +384,12 @@ function classificacaoLabel(string $c): array
     };
 }
 
-function badgeClassificacao(string $c): string
+function badgeClassificacao(string $c, ?float $pontos = null): string
 {
     [$rotulo, $classe, $icone] = classificacaoLabel($c);
-    return '<span class="badge ' . $classe . '"><i class="bi ' . $icone . '"></i> ' . $rotulo . '</span>';
+    $comPontos = $pontos !== null && $c !== 'sem_historico';
+    return '<span class="badge ' . $classe . '"' . ($comPontos ? ' title="Pontuação de 0 a 100: começa em 100; perde por atraso e devolução, recupera pagando"' : '') . '><i class="bi ' . $icone . '"></i> '
+        . $rotulo . ($comPontos ? ' · ' . formatarPontos($pontos) . ' pts' : '') . '</span>';
 }
 
 // ---------------------------------------------------------------

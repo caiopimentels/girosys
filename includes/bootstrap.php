@@ -52,6 +52,7 @@ require_once __DIR__ . '/auditoria.php';
 require_once __DIR__ . '/smtp_mailer.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/financeiro.php';
+require_once __DIR__ . '/pontuacao.php';
 require_once __DIR__ . '/desconto.php';
 require_once __DIR__ . '/cartoes.php';
 require_once __DIR__ . '/pagamento_ui.php';

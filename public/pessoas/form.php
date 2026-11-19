@@ -183,7 +183,7 @@ require __DIR__ . '/../../includes/layout_header.php';
     <?php elseif ($papel === 'pagador'): ?>
         <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body">
             <div class="kpi-rotulo">Como pagador</div>
-            <div class="mt-2"><?= badgeClassificacao($historico['classificacao']) ?></div>
+            <div class="mt-2"><?= badgeClassificacao($historico['classificacao'], $historico['pontos']) ?></div>
             <div class="small text-muted mt-1"><?= $historico['total'] ?> título(s) · <?= formatMoney($historico['valor_total']) ?></div>
         </div></div></div>
         <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body">

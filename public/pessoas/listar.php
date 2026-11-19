@@ -82,7 +82,7 @@ require __DIR__ . '/../../includes/layout_header.php';
                         <td class="text-end text-num"><?= formatMoney($p['a_receber']) ?></td>
                         <td class="text-center"><?= (int) $p['repasses'] ?: '-' ?></td>
                         <td class="text-end text-num <?= $p['repasses_aberto'] > 0.004 ? 'valor-negativo' : '' ?>"><?= $p['repasses'] ? formatMoney($p['repasses_aberto']) : '-' ?></td>
-                        <td><?= $p['titulos'] > 0 ? badgeClassificacao(historicoEmitente($pdo, (int) $p['id'])['classificacao']) : '<span class="text-muted small">-</span>' ?></td>
+                        <td><?= $p['titulos'] > 0 ? (fn ($h) => badgeClassificacao($h['classificacao'], $h['pontos']))(historicoEmitente($pdo, (int) $p['id'])) : '<span class="text-muted small">-</span>' ?></td>
                     <?php endif; ?>
                     <td class="text-end"><?= cadastroCompletoParaBoleto($p) ? '' : '<span class="badge text-bg-light" title="Faltam dados para emitir boleto">incompleto</span>' ?></td>
                     <?= acoesLinha('/pessoas/form.php?id=' . (int) $p['id'], $p['vinculos'] ? null : '/pessoas/form.php?id=' . (int) $p['id'],

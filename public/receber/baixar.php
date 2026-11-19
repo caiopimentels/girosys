@@ -247,7 +247,7 @@ function modoEdicaoTitulo(editar) {
 
     <?php if ($historico && $historico['em_dia'] + $historico['com_atraso'] + $historico['devolvidos'] + $historico['vencidos'] > 0): ?>
     <div class="card mb-3"><div class="card-body py-2 d-flex flex-wrap gap-3 align-items-center small">
-        <span class="text-muted">Como <?= e($t['emitente_nome']) ?> paga:</span> <?= badgeClassificacao($historico['classificacao']) ?>
+        <span class="text-muted">Como <?= e($t['emitente_nome']) ?> paga:</span> <?= badgeClassificacao($historico['classificacao'], $historico['pontos']) ?>
         <span><strong><?= $historico['total'] ?></strong> título(s)</span>
         <span class="valor-positivo"><strong><?= $historico['em_dia'] ?></strong> em dia</span>
         <span><strong><?= $historico['com_atraso'] ?></strong> com atraso</span>
@@ -329,7 +329,6 @@ function modoEdicaoTitulo(editar) {
             <form method="post">
                 <input type="hidden" name="acao" value="alterar">
                 <div class="row g-2">
-                    <div class="col-12"><label class="form-label small">Descrição</label><input type="text" name="descricao" class="form-control" maxlength="200" value="<?= e($t['descricao']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Tipo</label><select name="tipo" class="form-select"><?php foreach (tiposParaCampo($t['tipo']) as $k => $v): ?><option value="<?= $k ?>" <?= $t['tipo'] === $k ? 'selected' : '' ?>><?= $v ?></option><?php endforeach; ?></select></div>
                     <div class="col-md-3"><label class="form-label small">Valor (R$)</label><input type="text" name="valor" class="form-control" data-moeda inputmode="decimal" value="<?= formatDecimal($t['valor']) ?>"></div>
                     <div class="col-md-3"><label class="form-label small">Vencimento</label><input type="date" name="data_vencimento" class="form-control" value="<?= e($t['data_vencimento']) ?>"></div>
@@ -359,7 +358,7 @@ function modoEdicaoTitulo(editar) {
                     <div class="col-md-6"><label class="form-label small">Nosso número do boleto <span class="text-muted">(o "identificador" do Inter)</span></label>
                         <input type="text" name="boleto_nosso_numero" class="form-control" inputmode="numeric" maxlength="30" value="<?= e($t['boleto_nosso_numero']) ?>" <?= $t['boleto_codigo'] ? 'readonly title="Veio do banco"' : '' ?>>
                         <div class="form-text">É por ele que a planilha de boletos do banco acha este título para dar a baixa.</div></div>
-                    <div class="col-md-6"></div>
+                    <div class="col-12"><label class="form-label small">Descrição</label><input type="text" name="descricao" class="form-control" maxlength="200" value="<?= e($t['descricao']) ?>"></div>
                     <div class="col-12"><label class="form-label small">Observação</label><textarea name="observacao" class="form-control" rows="2"><?= e($t['observacao']) ?></textarea></div>
                     <?php if ($t['operacao_id'] && !$ehResidual): ?><div class="col-12 form-text">Mudando valor ou vencimento, os juros deste título e os totais da operação são recalculados.</div><?php endif; ?>
                     <div class="col-12 d-flex justify-content-end gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" onclick="modoEdicaoTitulo(false)">Cancelar</button><button class="btn btn-sm btn-brand"><i class="bi bi-check-lg"></i> Salvar alterações</button></div>
